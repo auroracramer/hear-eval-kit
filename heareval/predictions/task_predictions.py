@@ -22,7 +22,9 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, DefaultDict, Dict, List, Optional, Tuple, Union
+from typing import (
+    Any, Callable, DefaultDict, Dict, List, Optional, Sequence, Tuple, Union
+)
 
 import more_itertools
 import numpy as np
@@ -46,6 +48,8 @@ from heareval.score import (
     available_scores,
     label_to_binary_vector,
     label_vocab_as_dict,
+    spatial_to_vector,
+    spatial_projection_to_nspatial,
     validate_score_return_type,
 )
 
@@ -139,10 +143,42 @@ class OneHotToCrossEntropyLoss(pl.LightningModule):
         return self.loss(y_hat, y)
 
 
+class BranchModule(torch.nn.Module):
+    def __init__(self, branches: Sequence):
+        super(BranchModule, self).__init__()
+        self.branches = torch.nn.ModuleList(branches)
+    def forward(self, x: torch.Tensor):
+        return [branch(x) for branch in self.branches]
+
+
+class BranchConsumerModule(torch.nn.Module):
+    def __init__(self, branches: Sequence):
+        super(BranchConsumerModule, self).__init__()
+        self.branches = torch.nn.ModuleList(branches)
+    def forward(self, x_seq: Sequence[torch.Tensor]):
+        return [branch(x) for x, branch in zip(x_seq, self.branches)]
+
+
+class CartesianAngularMSELoss(torch.nn.Module):
+    def __init__(self, lambd: Callable):
+        super(CartesianAngularMSELoss, self).__init__()
+    def forward(self, cart: torch.Tensor, angular: torch.Tensor):
+
+        return self.lambd(x)
+
+
 class FullyConnectedPrediction(torch.nn.Module):
-    def __init__(self, nfeatures: int, nlabels: int, prediction_type: str, conf: Dict):
+    def __init__(
+        self,
+        nfeatures: int,
+        nlabels: int,
+        prediction_type: str,
+        conf: Dict,
+        nspatial: int = 3
+    ):
         super().__init__()
 
+        self.prediction_type = prediction_type
         hidden_modules: List[torch.nn.Module] = []
         curdim = nfeatures
         # Honestly, we don't really know what activation preceded
@@ -168,25 +204,59 @@ class FullyConnectedPrediction(torch.nn.Module):
             self.hidden = torch.nn.Sequential(*hidden_modules)
         else:
             self.hidden = torch.nn.Identity()  # type: ignore
-        self.projection = torch.nn.Linear(curdim, nlabels)
-
-        conf["initialization"](
-            self.projection.weight, gain=torch.nn.init.calculate_gain(last_activation)
-        )
+        
+        self.projection: torch.nn.Module
+        self.activation: torch.nn.Module
         self.logit_loss: torch.nn.Module
         if prediction_type == "multilabel":
-            self.activation: torch.nn.Module = torch.nn.Sigmoid()
+            conf["initialization"](
+                projection.weight, gain=torch.nn.init.calculate_gain(last_activation)
+            )
+            self.projection = torch.nn.Linear(curdim, nlabels)
+            self.activation = torch.nn.Sigmoid()
             self.logit_loss = torch.nn.BCEWithLogitsLoss()
         elif prediction_type == "multiclass":
+            conf["initialization"](
+                projection.weight, gain=torch.nn.init.calculate_gain(last_activation)
+            )
+            self.projection = torch.nn.Linear(curdim, nlabels)
             self.activation = torch.nn.Softmax()
-            self.logit_loss = OneHotToCrossEntropyLoss()
+            self.logit_loss = torch.nn.OneHotToCrossEntropyLoss()
+        elif prediction_type == "seld":
+            cls_projection = torch.nn.Linear(curdim, nlabels)
+            spa_projection = torch.nn.Linear(curdim, nspatial * nlabels)
+            for projection in (cls_projection, spa_projection):
+                conf["initialization"](
+                    projection.weight,
+                    gain=torch.nn.init.calculate_gain(last_activation)
+                )
+            self.projection = BranchModule([
+                cls_projection,
+                torch.nn.Sequential([spa_projection, torch.nn.Tanh()])
+            ])
+            # TODO: add a local module for this
+            self.activation = BranchConsumerModule([
+                torch.nn.Sigmoid(),
+                torch.nn.Identity(),
+            ])
+            self.logit_loss_modules = BranchConsumerModule([
+                torch.nn.BCEWithLogitsLoss(),
+                CartesianAngularMSELoss(),
+            ])
         else:
             raise ValueError(f"Unknown prediction_type {prediction_type}")
 
-    def forward_logit(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.hidden(x)
-        x = self.projection(x)
-        return x
+    def forward_loss_compatible(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.hidden(x)
+
+        outputs = []
+        if self.prediction_type == "seld":
+            for head_idx in range(len(self.projection_modules)):
+                y = self.projection(y)
+                outputs.append(y)
+        else:
+            return 
+        return outputs
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.forward_logit(x)
@@ -204,6 +274,7 @@ class AbstractPredictionModel(pl.LightningModule):
         scores: List[ScoreFunction],
         conf: Dict,
         use_scoring_for_early_stopping: bool = True,
+        nspatial: int = 3,
     ):
         super().__init__()
 
@@ -213,7 +284,7 @@ class AbstractPredictionModel(pl.LightningModule):
         # Since we don't know how these embeddings are scaled
         self.layernorm = conf["embedding_norm"](nfeatures)
         self.predictor = FullyConnectedPrediction(
-            nfeatures, nlabels, prediction_type, conf
+            nfeatures, nlabels, prediction_type, conf, nspatial=nspatial
         )
         torchinfo.summary(self.predictor, input_size=(64, nfeatures))
         self.label_to_idx = label_to_idx
@@ -306,12 +377,18 @@ class AbstractPredictionModel(pl.LightningModule):
 
     def _flatten_batched_outputs(
         self,
-        outputs,  #: Union[torch.Tensor, List[str]],
+        outputs,  #: Union[torch.Tensor, List[torch.Tensor], List[str]],
         keys: List[str],
-        dont_stack: List[str] = [],
+        dont_stack: Optional[List[str]] = None,
+        stack_elements: Optional[List[str]] = None
     ) -> Dict:
-        # ) -> Dict[str, Union[torch.Tensor, List[str]]]:
+        # ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor], List[str]]]:
         flat_outputs_default: DefaultDict = defaultdict(list)
+        dont_stack = dont_stack or []
+        stack_elements = stack_elements or []
+        assert not (set(dont_stack) & set(stack_elements)), (
+            "dont_stack and stack_elements should not overlap"
+        )
         for output in outputs:
             assert set(output.keys()) == set(keys), f"{output.keys()} != {keys}"
             for key in keys:
@@ -320,6 +397,8 @@ class AbstractPredictionModel(pl.LightningModule):
         for key in keys:
             if key in dont_stack:
                 continue
+            elif key in stack_elements:
+                flat_outputs[key] = [torch.stack(v) for v in zip(*flat_outputs[key])]
             else:
                 flat_outputs[key] = torch.stack(flat_outputs[key])
         return flat_outputs
@@ -356,7 +435,12 @@ class ScenePredictionModel(AbstractPredictionModel):
 
     def _score_epoch_end(self, name: str, outputs: List[Dict[str, List[Any]]]):
         flat_outputs = self._flatten_batched_outputs(
-            outputs, keys=["target", "prediction", "prediction_logit"]
+            outputs, keys=["target", "prediction", "prediction_logit"],
+            stack_elements=(
+                ["target", "prediction", "prediction_logit"]
+                if self.prediction_type == "seld"
+                else None
+            ),
         )
         target, prediction, prediction_logit = (
             flat_outputs[key] for key in ["target", "prediction", "prediction_logit"]
@@ -406,6 +490,7 @@ class EventPredictionModel(AbstractPredictionModel):
         postprocessing_grid: Dict[str, List[float]],
         conf: Dict,
         use_scoring_for_early_stopping: bool = True,
+        spatial_projection: Optional[str] = None,
     ):
         super().__init__(
             nfeatures=nfeatures,
@@ -415,6 +500,7 @@ class EventPredictionModel(AbstractPredictionModel):
             scores=scores,
             conf=conf,
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
+            nspatial=spatial_projection_to_nspatial(spatial_projection),
         )
         self.target_events = {
             "val": validation_target_events,
@@ -423,6 +509,7 @@ class EventPredictionModel(AbstractPredictionModel):
         # For each epoch, what postprocessing parameters were best
         self.epoch_best_postprocessing: Dict[int, Tuple[Tuple[str, Any], ...]] = {}
         self.postprocessing_grid = postprocessing_grid
+        self.spatial_projection = spatial_projection
 
     def epoch_best_postprocessing_or_default(
         self, epoch: int
@@ -436,11 +523,17 @@ class EventPredictionModel(AbstractPredictionModel):
             return tuple(postprocessing_confs[0].items())
 
     def _score_epoch_end(self, name: str, outputs: List[Dict[str, List[Any]]]):
+        keys = ["target", "prediction", "prediction_logit", "filename", "timestamp"]
         flat_outputs = self._flatten_batched_outputs(
             outputs,
-            keys=["target", "prediction", "prediction_logit", "filename", "timestamp"],
+            keys=keys,
             # This is a list of string, not tensor, so we don't need to stack it
             dont_stack=["filename"],
+            stack_elements=(
+                ["target", "prediction", "prediction_logit"]
+                if self.prediction_type == "seld"
+                else None
+            ),
         )
         target, prediction, prediction_logit, filename, timestamp = (
             flat_outputs[key]
@@ -475,8 +568,10 @@ class EventPredictionModel(AbstractPredictionModel):
                 filename,
                 timestamp,
                 self.idx_to_label,
+                self.prediction_type,
                 self.postprocessing_grid,
                 postprocessing_cached,
+                spatial_projection=self.spatial_projection,
             )
 
             score_and_postprocessing = []
@@ -518,10 +613,18 @@ class EventPredictionModel(AbstractPredictionModel):
 
             if name == "test":
                 # Cache all predictions for later serialization
+                if self.prediction_type == "seld":
+                    target = [v.detach().cpu() for v in target]
+                    prediction = [v.detach().cpu() for v in prediction]
+                    prediction_logit = [v.detach().cpu() for v in prediction_logit]
+                else:
+                    target = target.detach().cpu()
+                    prediction = prediction.detach().cpu()
+                    prediction_logit = prediction_logit.detach().cpu()
                 self.test_predictions = {
-                    "target": target.detach().cpu(),
-                    "prediction": prediction.detach().cpu(),
-                    "prediction_logit": prediction_logit.detach().cpu(),
+                    "target": target,
+                    "prediction": prediction,
+                    "prediction_logit": prediction_logit,
                     "target_events": self.target_events[name],
                     "predicted_events": predicted_events,
                     "timestamp": timestamp,
@@ -546,14 +649,18 @@ class SplitMemmapDataset(Dataset):
         nlabels: int,
         split_name: str,
         embedding_type: str,
+        prediction_type: str,
         in_memory: bool,
         metadata: bool,
+        spatial_projection: Optional[str] = None,
     ):
         self.embedding_path = embedding_path
         self.label_to_idx = label_to_idx
         self.nlabels = nlabels
         self.split_name = split_name
         self.embedding_type = embedding_type
+        self.prediction_type = prediction_type
+        self.nspatial = spatial_projection_to_nspatial(spatial_projection)
 
         self.dim = tuple(
             json.load(
@@ -576,6 +683,11 @@ class SplitMemmapDataset(Dataset):
         self.labels = pickle.load(
             open(embedding_path.joinpath(f"{split_name}.target-labels.pkl"), "rb")
         )
+        self.spatial: Optional[List] = None
+        if self.prediction_type == "seld":
+            self.spatial = pickle.load(
+                open(embedding_path.joinpath(f"{split_name}.target-spatial.pkl"), "rb")
+            )
         # Only used for event-based prediction, for validation and test scoring,
         # For timestamp (event) embedding tasks,
         # the metadata for each instance is {filename: , timestamp: }.
@@ -593,33 +705,61 @@ class SplitMemmapDataset(Dataset):
         assert len(self.labels) == len(self.embeddings)
         assert len(self.labels) == len(self.metadata)
         assert self.embeddings[0].shape[0] == self.dim[1]
+        if self.prediction_type == "seld":
+            assert len(self.spatial) == self.dim[0]
+            assert len(self.spatial) == len(self.embeddings)
+            assert len(self.spatial) == len(self.metadata)
+
 
         """
         For all labels, return a multi or one-hot vector.
         This allows us to have tensors that are all the same shape.
         Later we reduce this with an argmax to get the vocabulary indices.
         """
-        ys = []
+        ys_label = []
+        ys_spatial = []
+
         for idx in tqdm(range(len(self.labels))):
             labels = [self.label_to_idx[str(label)] for label in self.labels[idx]]
-            y = label_to_binary_vector(labels, self.nlabels)
-            ys.append(y)
-        self.y = torch.stack(ys)
-        assert self.y.shape == (len(self.labels), self.nlabels)
+            y_lbl = label_to_binary_vector(labels, self.nlabels)
+            ys_label.append(y_lbl)
+
+            if self.prediction_type == "seld":
+                spatial = self.spatial[idx]
+                y_spa = spatial_to_vector(spatial, labels, self.nlabels, self.nspatial)
+                ys_spatial.append(y_spa)
+
+        y_label = torch.stack(ys_label)
+        assert y_label.shape == (len(self.labels), self.nlabels)
+
+        if self.prediction_type == "seld":
+            y_spatial = torch.stack(ys_spatial)
+            assert y_spatial.shape == (len(self.spatial), self.nspatial * self.nlabels)
+            self.y = [y_label, y_spatial]
+        else:
+            self.y = y_label
+
+    def _get_y(self, idx):
+        if self.prediction_type == "seld":
+            return [_y[idx] for _y in self.y]
+        else:
+            return self.y[idx]
 
     def __len__(self) -> int:
         return self.dim[0]
 
-    def __getitem__(self, idx) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, Any]]:
-        return self.embeddings[idx], self.y[idx], self.metadata[idx]
+    def __getitem__(self, idx) -> Tuple[torch.Tensor, Union[torch.Tensor, Sequence[torch.Tensor]], Dict[str, Any]]:
+        return self.embeddings[idx], self._get_y(idx), self.metadata[idx]
 
 
 def create_events_from_prediction(
-    prediction_dict: Dict[float, torch.Tensor],
+    prediction_dict: Dict[float, Union[torch.Tensor, List[torch.Tensor]]],
     idx_to_label: Dict[int, str],
+    prediction_type: str,
     threshold: float = 0.5,
     median_filter_ms: float = 150,
     min_duration: float = 60.0,
+    spatial_projection: Optional[str] = None,
 ) -> List[Dict[str, Union[float, str]]]:
     """
     Takes a set of prediction tensors keyed on timestamps and generates events.
@@ -644,27 +784,46 @@ def create_events_from_prediction(
     """
     # Make sure the timestamps are in the correct order
     timestamps = np.array(sorted(prediction_dict.keys()))
+    ntime = len(timestamps)
+    nlabels = len(idx_to_label)
+    nspatial = spatial_projection_to_nspatial(spatial_projection)
 
     # Create a sorted numpy matrix of frame level predictions for this file. We convert
     # to a numpy array here before applying a median filter.
-    predictions = np.stack(
-        [prediction_dict[t].detach().cpu().numpy() for t in timestamps]
-    )
+    spatial_predictions: Optional[np.ndarray] = None
+    if prediction_type == "seld":
+        class_predictions, spatial_predictions = [
+            np.stack([v.detach().cpu().numpy() for v in pred_list])
+            for pred_list in zip(*(prediction_dict[t] for t in timestamps))
+        ]
+        spatial_predictions = spatial_predictions.reshape((ntime, nlabels, nspatial))
+    else:
+        class_predictions = np.stack(
+            [prediction_dict[t].detach().cpu().numpy() for t in timestamps]
+        )
 
     # Optionally apply a median filter here to smooth out events.
     ts_diff = np.mean(np.diff(timestamps))
     if median_filter_ms:
         filter_width = int(round(median_filter_ms / ts_diff))
         if filter_width:
-            predictions = median_filter(predictions, size=(filter_width, 1))
+            if prediction_type == "seld":
+                class_predictions = median_filter(class_predictions, size=(filter_width, 1)),
+                spatial_predictions = median_filter(spatial_predictions, size=(filter_width, 1, 1)),
+            else:
+                class_predictions = median_filter(predictions, size=(filter_width, 1))
 
     # Convert probabilities to binary vectors based on threshold
-    predictions = (predictions > threshold).astype(np.int8)
+    class_predictions = (class_predictions > threshold).astype(np.int8)
+    # vvv This probably isn't necessary since we only add events for active classes vvv
+    # Mask spatial predictions by class predictions
+    # if prediction_type == "seld":
+    #     spatial_predictions = np.expand_dims(class_predictions, axis=-1) * spatial_predictions
 
     events = []
-    for label in range(predictions.shape[1]):
+    for label in range(class_predictions.shape[1]):
         for group in more_itertools.consecutive_groups(
-            np.where(predictions[:, label])[0]
+            np.where(class_predictions[:, label])[0]
         ):
             grouptuple = tuple(group)
             assert (
@@ -676,9 +835,34 @@ def create_events_from_prediction(
             end = timestamps[endidx]
             # Add event if greater than the minimum duration threshold
             if end - start >= min_duration:
-                events.append(
-                    {"label": idx_to_label[label], "start": start, "end": end}
-                )
+                if prediction_type == "seld":
+                    # I guess endidx isn't included?
+                    for tidx in range(startidx, endidx):
+                        _start = timestamps[tidx]
+                        _end = timestamps[tidx + 1]
+                        event = {"label": idx_to_label[label], "start": _start, "end": _end}
+                        spatial = spatial_predictions[label, tidx]
+
+                        # Convert Cartesian to spherical (in degrees)
+                        if spatial_projection in ("unit_xy_disc"):
+                            x, y = spatial
+                            event["azimuth"] = np.rad2deg(np.arctan2(y, x))
+                        elif spatial_projection in ("unit_yz_disc"):
+                            y, z = spatial
+                            event["elevation"] = np.rad2deg(np.arccos(z / np.sqrt(y*y + z*z)))
+                        elif not spatial_projection or spatial_projection in ("unit_sphere", "none"):
+                            x, y, z = spatial
+                            # For unit_sphere should we normalize or just ignore rho?
+                            rho = np.sqrt(x*x + y*y + z*z)
+                            event["azimuth"] = np.rad2deg(np.arctan2(y, x))
+                            event["elevation"] = np.rad2deg(np.arccos(z / rho))
+                            if spatial_projection != "unit_sphere":
+                                event["distance"] = rho
+
+                        events.append(event)
+                else:
+                    event = {"label": idx_to_label[label], "start": start, "end": end}
+                    events.append(event)
 
     # This is just for pretty output, not really necessary
     events.sort(key=lambda k: k["start"])
@@ -690,8 +874,10 @@ def get_events_for_all_files(
     filenames: List[str],
     timestamps: torch.Tensor,
     idx_to_label: Dict[int, str],
+    prediction_type: str,
     postprocessing_grid: Dict[str, List[float]],
     postprocessing: Optional[Tuple[Tuple[str, Any], ...]] = None,
+    spatial_projection: Optional[str] = None,
 ) -> Dict[Tuple[Tuple[str, Any], ...], Dict[str, List[Dict[str, Union[str, float]]]]]:
     """
     Produces lists of events from a set of frame based label probabilities.
@@ -727,9 +913,14 @@ def get_events_for_all_files(
     """
     # This probably could be more efficient if we make the assumption that
     # timestamps are in sorted order. But this makes sure of it.
-    assert predictions.shape[0] == len(filenames)
-    assert predictions.shape[0] == len(timestamps)
-    event_files: Dict[str, Dict[float, torch.Tensor]] = {}
+    if prediction_type == "seld":
+        assert all(v.shape[0] == len(filenames) for v in predictions)
+        assert all(v.shape[0] == len(timestamps) for v in predictions)
+
+    else:
+        assert predictions.shape[0] == len(filenames)
+        assert predictions.shape[0] == len(timestamps)
+    event_files: Dict[str, Dict[float, Union[torch.Tensor, List[torch.Tensor]]]] = {}
     for i, (filename, timestamp) in enumerate(zip(filenames, timestamps)):
         slug = Path(filename).name
 
@@ -738,7 +929,10 @@ def get_events_for_all_files(
             event_files[slug] = {}
 
         # Save the predictions for the file keyed on the timestamp
-        event_files[slug][float(timestamp)] = predictions[i]
+        if prediction_type == "seld":
+            event_files[slug][float(timestamp)] = [v[i] for v in predictions]
+        else:
+            event_files[slug][float(timestamp)] = predictions[i]
 
     # Create events for all the different files. Store all the events as a dictionary
     # with the same format as the ground truth from the luigi pipeline.
@@ -751,7 +945,8 @@ def get_events_for_all_files(
         event_dict[postprocess] = {}
         for slug, timestamp_predictions in event_files.items():
             event_dict[postprocess][slug] = create_events_from_prediction(
-                timestamp_predictions, idx_to_label, **dict(postprocess)
+                timestamp_predictions, idx_to_label, prediction_type,
+                spatial_projection=spatial_projection, **dict(postprocess)
             )
     else:
         postprocessing_confs = list(ParameterGrid(postprocessing_grid))
@@ -760,7 +955,8 @@ def get_events_for_all_files(
             event_dict[postprocess] = {}
             for slug, timestamp_predictions in event_files.items():
                 event_dict[postprocess][slug] = create_events_from_prediction(
-                    timestamp_predictions, idx_to_label, **postprocess_dict
+                    timestamp_predictions, idx_to_label, prediction_type,
+                    spatial_projection=spatial_projection, **postprocess_dict
                 )
 
     return event_dict
@@ -780,10 +976,12 @@ def dataloader_from_split_name(
     label_to_idx: Dict[str, int],
     nlabels: int,
     embedding_type: str,
+    prediction_type: str,
     in_memory: bool,
     metadata: bool = True,
     batch_size: int = 64,
     pin_memory: bool = True,
+    spatial_projection: Optional[str] = None,
 ) -> DataLoader:
     """
     Get the dataloader for a `split_name` or a list of `split_name`
@@ -810,8 +1008,10 @@ def dataloader_from_split_name(
                     nlabels=nlabels,
                     split_name=name,
                     embedding_type=embedding_type,
+                    prediction_type=prediction_type,
                     in_memory=in_memory,
                     metadata=metadata,
+                    spatial_projection=spatial_projection,
                 )
                 for name in split_name
             ]
@@ -823,8 +1023,10 @@ def dataloader_from_split_name(
             nlabels=nlabels,
             split_name=split_name,
             embedding_type=embedding_type,
+            prediction_type=prediction_type,
             in_memory=in_memory,
             metadata=metadata,
+            spatial_projection=spatial_projection,
         )
     else:
         raise ValueError("split_name should be a list or string")
@@ -916,7 +1118,7 @@ def task_predictions_train(
 
     start = time.time()
     predictor: AbstractPredictionModel
-    if metadata["embedding_type"] == "event":
+    if metadata["embedding_type"] in ("event", "seld"):
 
         def _combine_target_events(split_names: List[str]):
             """
@@ -970,6 +1172,7 @@ def task_predictions_train(
             test_target_events=test_target_events,
             postprocessing_grid=postprocessing_grid,
             conf=conf,
+            spatial_projection=metadata.get("spatial_projection"),
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
         )
     elif metadata["embedding_type"] == "scene":
@@ -1029,9 +1232,11 @@ def task_predictions_train(
         label_to_idx,
         nlabels,
         metadata["embedding_type"],
+        metadata["prediction_type"],
         batch_size=conf["batch_size"],
         in_memory=in_memory,
         metadata=False,
+        spatial_projection=metadata.get("spatial_projection"),
     )
     valid_dataloader = dataloader_from_split_name(
         data_splits["valid"],
@@ -1039,8 +1244,10 @@ def task_predictions_train(
         label_to_idx,
         nlabels,
         metadata["embedding_type"],
+        metadata["prediction_type"],
         batch_size=conf["batch_size"],
         in_memory=in_memory,
+        spatial_projection=metadata.get("spatial_projection"),
     )
     trainer.fit(predictor, train_dataloader, valid_dataloader)
     if checkpoint_callback.best_model_score is not None:
@@ -1092,8 +1299,10 @@ def task_predictions_test(
         label_to_idx,
         nlabels,
         metadata["embedding_type"],
+        metadata["prediction_type"],
         batch_size=grid_point.conf["batch_size"],
         in_memory=in_memory,
+        spatial_projection=metadata.get("spatial_projection"),
     )
 
     trainer = grid_point.trainer
