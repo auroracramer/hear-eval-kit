@@ -233,6 +233,20 @@ def save_timestamp_embedding_and_labels(
         json.dump(labels[i], open(f"{out_file}.target-labels.json", "w"), indent=4)
 
 
+def save_timestamp_embedding_and_labels_and_spatial(
+    embeddings: np.ndarray,
+    timestamps: np.ndarray,
+    labels: np.ndarray,
+    spatial: np.ndarray,
+    filename: Tuple[str],
+    outdir: Path,
+):
+    save_timestamp_embedding_and_labels(embeddings, timestamps, labels, filename, outdir)
+    for i, file in enumerate(filename):
+        out_file = outdir.joinpath(f"{file}")
+        json.dump(spatial[i], open(f"{out_file}.target-spatial.json", "w"), indent=4)
+
+
 def get_labels_for_timestamps(labels: List, timestamps: np.ndarray) -> List:
     # -> List[List[List[str]]]:
     # -> List[List[str]]:
@@ -261,6 +275,76 @@ def get_labels_for_timestamps(labels: List, timestamps: np.ndarray) -> List:
 
     assert len(timestamp_labels) == len(timestamps)
     return timestamp_labels
+
+
+def get_labels_and_spatial_for_timestamps(
+    file_data_list: List,
+    timestamps: np.ndarray,
+    spatial_projection: str,
+) -> List:
+    assert len(file_data_list) == len(timestamps)
+
+    timestamp_labels = []
+    timestamp_spatial = []
+
+    for i, file_data in enumerate(file_data_list):
+        tree = IntervalTree()
+        # Add all events to the label tree
+        for event in file_data:
+            azi, ele = float(event["azimuth"]), float(event["elevation"])
+                
+            assert -180 <= azi < 180, (
+                f"azimuth must be in range [-180, 180) but got {azi}"
+            )
+            assert -90 <= ele < 90, (
+                f"elevation must be in range [-90, 90) but got {ele}"
+            )
+
+            # Convert to radians
+            theta = np.deg2rad(azi)
+            # Account for egocentric vs. standard spherical phi convention too
+            phi = np.deg2rad(90.0 - ele)
+            rho = float(event.get("distance", 1.0))
+            x = rho * np.sin(phi) * np.cos(theta)
+            y = rho * np.sin(phi) * np.sin(theta)
+            z = rho * np.cos(phi)
+            
+            spatial: List
+            if spatial_projection == "unit_xy_disc":
+                spatial = [x, y]
+            elif spatial_projection == "unit_yz_disc":
+                spatial = [y, z]
+            elif spatial_projection in ("unit_sphere", "none"):
+                spatial = [x, y, z]
+            else:
+                raise ValueError(f"Invalid spatial projection: {spatial_projection}")
+
+            # We add 0.0001 so that the end also includes the event
+            tree.addi(
+                event["start"],
+                event["end"] + 0.0001,
+                [event["label"], spatial]
+            )
+
+        labels_for_sound = []
+        spatial_for_sound = []
+        # Update the binary vector of labels with intervals for each timestamp
+        for j, t in enumerate(timestamps[i]):
+            (interval_labels, interval_spatial): Tuple[List[str], List[List[float]]] = (
+                zip(*[interval.data for interval in tree[t]])
+            )
+            labels_for_sound.append(interval_labels)
+            spatial_for_sound.append(interval_spatial)
+
+            # If we want to store the timestamp too
+            # labels_for_sound.append([float(t), interval_labels])
+
+        timestamp_labels.append(labels_for_sound)
+        timestamp_spatial.append(spatial_for_sound)
+
+    assert len(timestamp_labels) == len(timestamp_spatial) == len(timestamps)
+
+    return timestamp_labels, timestamp_spatial
 
 
 def memmap_embeddings(
@@ -311,6 +395,7 @@ def memmap_embeddings(
     idx = 0
     labels = []
     filename_timestamps = []
+    spatial = []
     for embedding_file in tqdm(embedding_files):
         emb = np.load(embedding_file)
         lbl = json.load(
@@ -350,6 +435,15 @@ def memmap_embeddings(
             ), f"{emb.shape[0]} != {len(timestamps)}"
             assert len(lbl) == len(timestamps), f"{len(lbl)} != {len(timestamps)}"
 
+            if metadata["prediction_type"] == "seld":
+                spa = json.load(
+                    open(str(embedding_file).replace("embedding.npy", "target-spatial.json"))
+                )
+                assert isinstance(spa, list)
+                spatial += spa
+
+
+
             idx += emb.shape[0]
         else:
             raise ValueError(f"Unknown embedding type: {metadata['embedding_type']}")
@@ -370,6 +464,16 @@ def memmap_embeddings(
             embed_task_dir.joinpath(f"{split_name}.filename-timestamps.json"),
             "wt",
         ).write(json.dumps(filename_timestamps, indent=4))
+
+        if metadata["prediction_type"] == "seld":
+            pickle.dump(
+                spatial,
+                open(
+                    embed_task_dir.joinpath(f"{split_name}.target-spatial.pkl"),
+                    "wb",
+                ),
+            )
+            
 
 
 def task_embeddings(
@@ -440,22 +544,34 @@ def task_embeddings(
             os.makedirs(outdir)
 
         for audios, filenames in tqdm(dataloader):
-            labels = [split_data[file] for file in filenames]
-
+            file_data_list = [split_data[file] for file in filenames]
             if metadata["embedding_type"] == "scene":
+                labels = file_data_list
                 embeddings = embedding.get_scene_embedding_as_numpy(audios)
                 save_scene_embedding_and_labels(embeddings, labels, filenames, outdir)
 
             elif metadata["embedding_type"] == "event":
+                labels = file_data_list
                 embeddings, timestamps = embedding.get_timestamp_embedding_as_numpy(
                     audios
                 )
-                labels = get_labels_for_timestamps(labels, timestamps)
-                assert len(labels) == len(filenames)
-                assert len(labels[0]) == len(timestamps[0])
-                save_timestamp_embedding_and_labels(
-                    embeddings, timestamps, labels, filenames, outdir
-                )
+                if metadata["prediction_type"] == "seld":
+                    labels, spatial = get_labels_and_spatial_for_timestamps(
+                        file_data_list, timestamps,
+                        projection=metadata["spatial_projection"]
+                    )
+                    assert len(labels) == len(filenames)
+                    assert len(labels[0]) == len(timestamps[0])
+                    save_timestamp_embedding_and_labels_and_spatial(
+                        embeddings, timestamps, labels, spatial, filenames, outdir
+                    )
+                else:
+                    labels = get_labels_for_timestamps(labels, timestamps)
+                    assert len(labels) == len(filenames)
+                    assert len(labels[0]) == len(timestamps[0])
+                    save_timestamp_embedding_and_labels(
+                        embeddings, timestamps, labels, filenames, outdir
+                    )
 
             else:
                 raise ValueError(
