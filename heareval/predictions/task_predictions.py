@@ -57,7 +57,15 @@ TASK_SPECIFIC_PARAM_GRID = {
     "dcase2016_task2": {
         # sed_eval is very slow
         "check_val_every_n_epoch": [10],
-    }
+    },
+    "soundata_tau2021sse_nigens": {
+        "loss_weight_sed": [1.0],
+        "loss_weight_doa": [50.0],
+    },
+    "soundata_tau2021sse_nigens_xy": {
+        "loss_weight_sed": [1.0],
+        "loss_weight_doa": [50.0],
+    },
 }
 
 PARAM_GRID = {
@@ -158,13 +166,15 @@ class BranchConsumerModule(torch.nn.Module):
     def forward(self, x_seq: Sequence[torch.Tensor]):
         return [branch(x) for x, branch in zip(x_seq, self.branches)]
 
-
-class CartesianAngularMSELoss(torch.nn.Module):
-    def __init__(self, lambd: Callable):
-        super(CartesianAngularMSELoss, self).__init__()
-    def forward(self, cart: torch.Tensor, angular: torch.Tensor):
-
-        return self.lambd(x)
+class BranchWeightedSumModule(torch.nn.Module):
+    def __init__(self, weights: Sequence[float]):
+        super(BranchConsumerModule, self).__init__()
+        self.weights = weights
+    def forward(self, x_seq: Sequence[torch.Tensor]):
+        assert len(x_seq) == len(self.weights), (
+            f"Number of inputs ({len(x_seq)}) differs from number of weights ({len(self.weights)})"
+        )
+        return sum(weight * x for x, weight in zip(x_seq, self.weights))
 
 
 class FullyConnectedPrediction(torch.nn.Module):
@@ -207,21 +217,21 @@ class FullyConnectedPrediction(torch.nn.Module):
         
         self.projection: torch.nn.Module
         self.activation: torch.nn.Module
-        self.logit_loss: torch.nn.Module
+        self.loss: torch.nn.Module
         if prediction_type == "multilabel":
             conf["initialization"](
                 projection.weight, gain=torch.nn.init.calculate_gain(last_activation)
             )
             self.projection = torch.nn.Linear(curdim, nlabels)
             self.activation = torch.nn.Sigmoid()
-            self.logit_loss = torch.nn.BCEWithLogitsLoss()
+            self.loss = torch.nn.BCEWithLogitsLoss()
         elif prediction_type == "multiclass":
             conf["initialization"](
                 projection.weight, gain=torch.nn.init.calculate_gain(last_activation)
             )
             self.projection = torch.nn.Linear(curdim, nlabels)
             self.activation = torch.nn.Softmax()
-            self.logit_loss = torch.nn.OneHotToCrossEntropyLoss()
+            self.loss = torch.nn.OneHotToCrossEntropyLoss()
         elif prediction_type == "seld":
             cls_projection = torch.nn.Linear(curdim, nlabels)
             spa_projection = torch.nn.Linear(curdim, nspatial * nlabels)
@@ -234,32 +244,31 @@ class FullyConnectedPrediction(torch.nn.Module):
                 cls_projection,
                 torch.nn.Sequential([spa_projection, torch.nn.Tanh()])
             ])
-            # TODO: add a local module for this
             self.activation = BranchConsumerModule([
                 torch.nn.Sigmoid(),
                 torch.nn.Identity(),
             ])
-            self.logit_loss_modules = BranchConsumerModule([
-                torch.nn.BCEWithLogitsLoss(),
-                CartesianAngularMSELoss(),
+            # TODO: Implement ACCDOA loss
+            self.loss = torch.nn.Sequential([
+                BranchConsumerModule([
+                    torch.nn.BCEWithLogitsLoss(),
+                    torch.nn.MSELoss(),
+                ]),
+                BranchWeightedSumModule([
+                    conf["loss_weight_sed"],
+                    conf["loss_weight_doa"],
+                ]),
             ])
         else:
             raise ValueError(f"Unknown prediction_type {prediction_type}")
 
     def forward_loss_compatible(self, x: torch.Tensor) -> torch.Tensor:
-        y = self.hidden(x)
-
-        outputs = []
-        if self.prediction_type == "seld":
-            for head_idx in range(len(self.projection_modules)):
-                y = self.projection(y)
-                outputs.append(y)
-        else:
-            return 
-        return outputs
+        x = self.hidden(x)
+        x = self.projection(x)
+        return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.forward_logit(x)
+        x = self.forward_loss_compatible(x)
         x = self.activation(x)
         return x
 
@@ -302,8 +311,8 @@ class AbstractPredictionModel(pl.LightningModule):
         # training_step defined the train loop.
         # It is independent of forward
         x, y, _ = batch
-        y_hat = self.predictor.forward_logit(x)
-        loss = self.predictor.logit_loss(y_hat, y)
+        y_hat = self.predictor.forward_loss_compatible(x)
+        loss = self.predictor.loss(y_hat, y)
         # Logging to TensorBoard by default
         self.log("train_loss", loss)
         return loss
@@ -311,7 +320,7 @@ class AbstractPredictionModel(pl.LightningModule):
     def _step(self, batch, batch_idx):
         # -> Dict[str, Union[torch.Tensor, List(str)]]:
         x, y, metadata = batch
-        y_hat = self.predictor.forward_logit(x)
+        y_hat = self.predictor.forward_loss_compatible(x)
         y_pr = self.predictor(x)
         z = {
             "prediction": y_pr,
@@ -448,7 +457,7 @@ class ScenePredictionModel(AbstractPredictionModel):
 
         self.log(
             f"{name}_loss",
-            self.predictor.logit_loss(prediction_logit, target),
+            self.predictor.loss(prediction_logit, target),
             prog_bar=True,
             logger=True,
         )
@@ -548,7 +557,7 @@ class EventPredictionModel(AbstractPredictionModel):
 
         self.log(
             f"{name}_loss",
-            self.predictor.logit_loss(prediction_logit, target),
+            self.predictor.loss(prediction_logit, target),
             prog_bar=True,
             logger=True,
         )
