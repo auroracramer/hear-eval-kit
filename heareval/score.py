@@ -11,6 +11,7 @@ import sed_eval
 import torch
 from sklearn.metrics import average_precision_score, roc_auc_score
 from scipy import stats
+from heareval.seld import SELDMetrics, segment_labels
 
 # Can we get away with not using DCase for every event-based evaluation??
 from dcase_util.containers import MetaDataContainer
@@ -52,6 +53,42 @@ def label_to_binary_vector(label: List, num_labels: int) -> torch.Tensor:
     # Validate the binary vector we just created
     assert set(torch.where(binary_labels == 1.0)[0].numpy()) == set(label)
     return binary_labels
+
+
+def spatial_projection_to_nspatial(projection: Optional[str]) -> int:
+    """
+    Gets the number of spatial dimensions for a given spatial projection.
+    Args:
+        projection: name of spatial projection or None
+
+    Returns:
+        An int that is the number of spatial dimensions
+    """
+    if projection in ("unit_xy_disc", "unit_yz_disc"):
+        return 2
+    elif projection is None or projection in ("unit_sphere", "none"):
+        return 3
+    else:
+        raise ValueError(f"Invalid spatial projection {projection}")
+
+
+def spatial_to_vector(spatial: List, label: List, num_labels: int, num_spatial: int) -> torch.Tensor:
+    """
+    Converts a list of labels into a binary vector
+    Args:
+        spatial: list of spatial coordinate lists
+        label: list of integer labels
+        num_labels: total number of labels
+
+    Returns:
+        A float Tensor that is vector
+    """
+    # 
+    spatial_matrix = torch.zeros((num_labels, num_spatial), dtype=torch.float)
+    for lbl_idx, spatial_vec in zip(label, spatial):
+        spatial_matrix[lbl_idx] = torch.Tensor(spatial_vec)
+
+    return spatial_matrix.flatten()
 
 
 def validate_score_return_type(ret: Union[Tuple[Tuple[str, float], ...], float]):
@@ -200,7 +237,7 @@ class SoundEventScore(ScoreFunction):
         :param scores: Scores to use, from the list of overall SED eval scores.
             The first score in the tuple will be the primary score for this metric
         :param params: Parameters to pass to the scoring function,
-                       see inheriting children for details.
+            see inheriting children for details.
         """
         if params is None:
             params = {}
@@ -314,6 +351,130 @@ class MeanAveragePrecision(ScoreFunction):
         return average_precision_score(targets, predictions, average="macro")
 
 
+class SELDScore(ScoreFunction):
+    """
+    Scores for sound event detection tasks using sed_eval
+    """
+
+    def __init__(
+        self,
+        label_to_idx: Dict[str, int],
+        scores: Tuple[str],
+        params: Dict = None,
+        name: Optional[str] = None,
+        doa_threshold: float = 20.0,
+        maximize: bool = True,
+        segment_duration_ms: int = 1000,  
+    ):
+        """
+        :param scores: Scores to use, from the list of overall SELD eval scores.
+            The first score in the tuple will be the primary score for this metric
+        :param params: Parameters to pass to the scoring function,
+            see inheriting children for details.
+        """
+        if params is None:
+            params = {}
+        super().__init__(label_to_idx=label_to_idx, name=name, maximize=maximize)
+        assert 0.0 <= doa_threshold <= 360.0
+        self.scores = scores
+        self.params = params
+        self.doa_threshold = doa_threshold
+        self.segment_duration_ms = segment_duration_ms
+
+    def _compute(
+        self, predictions: Dict, targets: Dict,
+        **kwargs
+    ) -> Tuple[Tuple[str, float], ...]:
+        scores = SELDMetrics(
+            doa_threshold=self.doa_threshold,
+            nb_classes=len(self.label_to_idx),
+        )
+
+        # Convert predictions/targets to SELD compatible format
+        predictions = self.seld_eval_event_container(predictions, self.label_to_idx, self.segment_duration_ms)
+        targets = self.seld_eval_event_container(targets, self.label_to_idx, self.segment_duration_ms)
+
+        for filename in predictions:
+            scores.update_seld_scores(
+                pred=predictions[filename],
+                gt=targets[filename],
+            )
+
+        # results_overall_metrics return a pretty large nested selection of scores,
+        # with dicts of scores keyed on the type of scores, like f_measure, error_rate,
+        # accuracy
+        # TODO: Probably need to change this
+
+        
+        scores._average = 'macro'
+        er_macro, f_macro, le_macro, lr_macro, scr_macro, _ = scores.compute_seld_scores()
+        scores._average = 'micro'
+        er_micro, f_micro, le_micro, lr_micro, scr_micro, _ = scores.compute_seld_scores()
+        # ER (seld_er), F (seld_f), LE (seld_le), LR (seld_lr), SELD_scr (seld_score), classwise_results
+
+        overall_scores: Dict[str, float] = dict(
+            error_rate=er_micro,
+            f_measure=f_micro,
+            localization_error=le_micro,
+            localization_recall=lr_micro,
+            score=scr_micro,
+            error_rate_cd=er_macro,
+            f_measure_cd=f_macro,
+            localization_error_cd=le_macro,
+            localization_recall_cd=lr_macro,
+            score_cd=scr_macro,
+        )
+        # Return the required scores as tuples. The scores are returned in the
+        # order they are passed in the `scores` argument
+        return tuple([(score, overall_scores[score]) for score in self.scores])
+
+    @staticmethod
+    def get_segment_length(
+        x: Dict[str, List[Dict[str, Any]]],
+        duration_ms: int
+    ) -> int:
+        event_list = next(iter(x.values()))
+        num_frames = 0
+        total_time = 0.0
+        for event in sorted(event_list, key=lambda x: x['start']):
+            frame_duration_ms = event['end'] - event['start']
+            # break if adding this event would exceed the segment length
+            if total_time + frame_duration_ms > duration_ms:
+                break
+            num_frames += 1
+            total_time += frame_duration_ms
+        # make sure we return at least one frame
+        return max(num_frames, 1)
+
+    @staticmethod
+    def seld_eval_event_container(
+        x: Dict[str, List[Dict[str, Any]]],
+        label_to_idx: Dict[str, int],
+        segment_duration_ms: int,
+    ) -> Dict:
+        nb_label_frames_1s = SELDScore.get_segment_length(x, segment_duration_ms)
+        # Reformat event list for SELD metrics
+        out_dict = {}
+        for filename, event_list in x.items():
+            # ensure list is sorted
+            event_list = sorted(event_list, key=lambda x: x['start'])
+            num_frames = len(event_list)
+            tmp_event_dict = {}
+            # dict[class-index][frame-index] = [doa]
+            # dictionary_name[segment-index][class-index] = list(frame-cnt-within-segment, azimuth, elevation)
+            for frame_idx, event in enumerate(event_list):
+                class_idx = label_to_idx[event["label"]]
+                azi = event.get("azimuth", 0.0)
+                ele = event.get("elevation", 0.0)
+                tmp_event_dict[frame_idx] = [class_idx, azi, ele]
+
+            out_dict[filename] = segment_labels(
+                tmp_event_dict, num_frames, nb_label_frames_1s
+            )
+
+        return out_dict
+
+
 class DPrime(ScoreFunction):
     """
     DPrime is calculated per class followed by averaging across the classes
@@ -397,6 +558,19 @@ available_scores: Dict[str, Callable] = {
         scores=("error_rate",),
         params={"time_resolution": 1.0},
         maximize=False,
+    ),
+    "segment_1s_seld": partial(
+        SELDMetrics,
+        name="seld_micro_segment_1s",
+        scores=(
+            "score_macro", "score",
+            "localization_score_macro", "localization_score",
+            "localization_recall_macro", "localization_recall",
+            "error_rate_macro", "error_rate",
+            "f_measure_macro", "f_measure"
+        ),
+        average="micro",
+        segment_duration_ms=1000,
     ),
     "mAP": MeanAveragePrecision,
     "d_prime": DPrime,
