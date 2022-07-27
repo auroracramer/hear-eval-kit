@@ -188,9 +188,10 @@ class AudioFileDataset(Dataset):
         # Load in audio here in the Dataset. When the batch size is larger than
         # 1 then the torch dataloader can take advantage of multiprocessing.
         audio_path = self.audio_dir.joinpath(self.filenames[idx])
-        audio, sr = sf.read(str(audio_path), dtype=np.float32)
+        audio, sr = sf.read(str(audio_path), dtype=np.float32, always_2d=True)
         assert sr == self.sample_rate
-        return audio, self.filenames[idx]
+        # Returned audio is shape (n_channels, n_samples)
+        return audio.T, self.filenames[idx]
 
 
 def get_dataloader_for_embedding(
