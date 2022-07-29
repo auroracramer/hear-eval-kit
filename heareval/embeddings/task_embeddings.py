@@ -186,11 +186,12 @@ class AudioFileDataset(Dataset):
     Read in a JSON file and return audio and audio filenames
     """
 
-    def __init__(self, data: Dict, audio_dir: Path, sample_rate: int):
+    def __init__(self, data: Dict, audio_dir: Path, sample_rate: int, num_channels: int):
         self.filenames = list(data.keys())
         self.audio_dir = audio_dir
         assert self.audio_dir.is_dir(), f"{audio_dir} is not a directory"
         self.sample_rate = sample_rate
+        self.num_channels = num_channels
 
     def __len__(self):
         return len(self.filenames)
@@ -201,6 +202,7 @@ class AudioFileDataset(Dataset):
         audio_path = self.audio_dir.joinpath(self.filenames[idx])
         audio, sr = sf.read(str(audio_path), dtype=np.float32, always_2d=True)
         assert sr == self.sample_rate
+        assert audio.shape[1] == self.num_channels
         # Returned audio is shape (n_channels, n_samples)
         return audio.T, self.filenames[idx]
 
@@ -210,7 +212,9 @@ def get_dataloader_for_embedding(
 ):
     if embedding.type == TORCH or embedding.type == TENSORFLOW:
         return DataLoader(
-            AudioFileDataset(data, audio_dir, embedding.sample_rate),
+            AudioFileDataset(
+                data, audio_dir, embedding.sample_rate, embedding.num_channels
+            ),
             batch_size=batch_size,
             shuffle=False,
         )
@@ -526,6 +530,8 @@ def task_embeddings(
             assert embedding.num_channels == 1
         elif channel_format == "stereo":
             assert embedding.num_channels == 2
+        else:
+            raise ValueError(f"Unsupported channel format: {channel_format}")
 
         # Root directory for audio files for this split
         audio_dir = task_path.joinpath(channel_format, str(embedding.sample_rate), split)
@@ -545,7 +551,7 @@ def task_embeddings(
                     # One of the submissions needs smaller batches
                     0.7
                     * (120 / metadata["sample_duration"])
-                    * (16000 / embedding.sample_rate)
+                    * (16000 / (embedding.sample_rate * embedding.num_channels))
                 ),
             )
         else:
