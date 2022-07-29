@@ -44,6 +44,13 @@ import heareval.gpu_max_mem as gpu_max_mem
 TORCH = "torch"
 TENSORFLOW = "tf"
 
+CHANNEL_FORMATS = {
+    "seld": "stereo",
+    # multiclass and multilabel assumed to be mono
+    "multiclass": "mono",
+    "multilabel": "mono",
+}
+
 
 class Embedding:
     """
@@ -97,6 +104,10 @@ class Embedding:
     @property
     def sample_rate(self):
         return self.model.sample_rate
+
+    @property
+    def num_channels(self):
+        return self.model.num_channels
 
     def as_tensor(self, x: Union[np.ndarray, torch.Tensor]):
         if self.type == TORCH:
@@ -510,8 +521,14 @@ def task_embeddings(
         # Copy over the ground truth labels as they may be needed for evaluation
         shutil.copy(split_path, embed_task_dir)
 
+        channel_format = CHANNEL_FORMATS[metadata["prediction_type"]]
+        if channel_format == "mono":
+            assert embedding.num_channels == 1
+        elif channel_format == "stereo":
+            assert embedding.num_channels == 2
+
         # Root directory for audio files for this split
-        audio_dir = task_path.joinpath(str(embedding.sample_rate), split)
+        audio_dir = task_path.joinpath(channel_format, str(embedding.sample_rate), split)
 
         # TODO: We might consider skipping files that already
         # have embeddings on disk, for speed.
