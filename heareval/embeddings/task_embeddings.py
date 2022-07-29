@@ -584,7 +584,7 @@ def task_embeddings(
                 if metadata["prediction_type"] == "seld":
                     labels, spatial = get_labels_and_spatial_for_timestamps(
                         file_data_list, timestamps,
-                        projection=metadata["spatial_projection"]
+                        spatial_projection=metadata["spatial_projection"]
                     )
                     assert len(labels) == len(filenames)
                     assert len(labels[0]) == len(timestamps[0])
