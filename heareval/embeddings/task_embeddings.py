@@ -325,13 +325,13 @@ def get_labels_and_spatial_for_timestamps(
             y = rho * np.sin(phi) * np.sin(theta)
             z = rho * np.cos(phi)
             
-            spatial: List
+            spatial: Tuple[float, ...]
             if spatial_projection == "unit_xy_disc":
-                spatial = [x, y]
+                spatial = (x, y)
             elif spatial_projection == "unit_yz_disc":
-                spatial = [y, z]
+                spatial = (y, z)
             elif spatial_projection in ("unit_sphere", "none"):
-                spatial = [x, y, z]
+                spatial = (x, y, z)
             else:
                 raise ValueError(f"Invalid spatial projection: {spatial_projection}")
 
@@ -339,20 +339,20 @@ def get_labels_and_spatial_for_timestamps(
             tree.addi(
                 event["start"],
                 event["end"] + 0.0001,
-                [event["label"], spatial]
+                (event["label"], spatial)
             )
 
         labels_for_sound = []
         spatial_for_sound = []
         # Update the binary vector of labels with intervals for each timestamp
         for j, t in enumerate(timestamps[i]):
-            interval_labels: List[str]
-            interval_spatial: List[List[float]]
+            interval_labels: Tuple[str]
+            interval_spatial: Tuple[Tuple[float]]
             (interval_labels, interval_spatial) = (
                 zip(*[interval.data for interval in tree[t]])
             )
-            labels_for_sound.append(interval_labels)
-            spatial_for_sound.append(interval_spatial)
+            labels_for_sound.append(list(interval_labels))
+            spatial_for_sound.append(list(interval_spatial))
 
             # If we want to store the timestamp too
             # labels_for_sound.append([float(t), interval_labels])
