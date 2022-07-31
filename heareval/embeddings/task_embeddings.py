@@ -346,14 +346,11 @@ def get_labels_and_spatial_for_timestamps(
         spatial_for_sound = []
         # Update the binary vector of labels with intervals for each timestamp
         for j, t in enumerate(timestamps[i]):
-            interval_labels: Tuple[str]
-            interval_spatial: Tuple[Tuple[float]]
-            try:
-                (interval_labels, interval_spatial) = (
-                    zip(*[interval.data for interval in tree[t]])
-                )
-            except ValueError:
-                print([interval.data for interval in tree[t]])
+            interval_labels: Tuple[str, ...]
+            interval_spatial: Tuple[Tuple[float, ...], ...]
+            (interval_labels, interval_spatial) = (
+                zip(*[interval.data for interval in tree[t]]) or ((), ())
+            )
             labels_for_sound.append(list(interval_labels))
             spatial_for_sound.append(list(interval_spatial))
 
