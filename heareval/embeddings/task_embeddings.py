@@ -349,7 +349,7 @@ def get_labels_and_spatial_for_timestamps(
             interval_labels: Tuple[str, ...]
             interval_spatial: Tuple[Tuple[float, ...], ...]
             (interval_labels, interval_spatial) = (
-                zip(*[interval.data for interval in tree[t]]) or ((), ())
+                tuple(zip(*[interval.data for interval in tree[t]])) or ((), ())
             )
             labels_for_sound.append(list(interval_labels))
             spatial_for_sound.append(list(interval_spatial))
