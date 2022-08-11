@@ -3,15 +3,20 @@ Common utils for scoring.
 """
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from collections import ChainMap
+from collections import ChainMap, defaultdict
+from operator import itemgetter
+from itertools import groupby
+from xml.etree.ElementInclude import include
 
 import numpy as np
 import pandas as pd
 import sed_eval
 import torch
+import intervaltree
 from sklearn.metrics import average_precision_score, roc_auc_score
 from scipy import stats
 from heareval.seld import SELDMetrics, segment_labels
+from heareval.labels import get_labels_for_file_timestamps
 
 # Can we get away with not using DCase for every event-based evaluation??
 from dcase_util.containers import MetaDataContainer
@@ -33,7 +38,12 @@ def label_vocab_as_dict(df: pd.DataFrame, key: str, value: str) -> Dict:
     return df.set_index(key).to_dict()[value]
 
 
-def label_to_binary_vector(label: List, num_labels: int) -> torch.Tensor:
+def label_to_binary_tensor(
+    label: List,
+    num_labels: int,
+    num_tracks: Optional[int] = None,
+    num_sublabels: Optional[int] = None
+) -> torch.Tensor:
     """
     Converts a list of labels into a binary vector
     Args:
@@ -43,15 +53,39 @@ def label_to_binary_vector(label: List, num_labels: int) -> torch.Tensor:
     Returns:
         A float Tensor that is multi-hot binary vector
     """
+    assert bool(num_tracks) != bool(num_sublabels), (
+        "Using both multitrack and sublabel outputs are not supported"
+    )
+
+    shape = (num_labels,)
+    if num_tracks:
+        num_tracks_adpit = (num_tracks * (num_tracks + 1)) // 2
+        shape += (num_tracks_adpit,)
+    elif num_sublabels:
+        shape += (num_sublabels,)
+
     # Lame special case for multilabel with no labels
     if len(label) == 0:
         # BCEWithLogitsLoss wants float not long targets
-        binary_labels = torch.zeros((num_labels,), dtype=torch.float)
+        binary_labels = torch.zeros(shape, dtype=torch.float)
+    elif num_tracks:
+        binary_labels = torch.zeros(shape)
+        # https://github.com/sharathadavanne/seld-dcase2022/blob/main/cls_feature_class.py#L242
+        for lbl_idx, group in groupby(label, key=itemgetter(0)):
+            num_insts = len(group)
+            start = (num_insts * (num_insts - 1)) // 2
+            end = start + num_insts
+            binary_labels[lbl_idx, start:end] = 1.0
+        # TODO validate
+    elif num_sublabels:
+        binary_labels = torch.zeros(shape)
+        lbl_idxs, sublbl_idxs = zip(*label)
+        binary_labels[lbl_idxs, sublbl_idxs] = 1.0
     else:
-        binary_labels = torch.zeros((num_labels,)).scatter(0, torch.tensor(label), 1.0)
+        binary_labels = torch.zeros(shape).scatter(0, torch.tensor(label), 1.0)
+        # Validate the binary vector we just created
+        assert set(torch.where(binary_labels == 1.0)[0].numpy()) == set(label)
 
-    # Validate the binary vector we just created
-    assert set(torch.where(binary_labels == 1.0)[0].numpy()) == set(label)
     return binary_labels
 
 
@@ -72,23 +106,43 @@ def spatial_projection_to_nspatial(projection: Optional[str]) -> int:
         raise ValueError(f"Invalid spatial projection {projection}")
 
 
-def spatial_to_vector(spatial: List, label: List, num_labels: int, num_spatial: int) -> torch.Tensor:
+def label_spatial_to_tensor(label: List, spatial: List, num_labels: int, num_spatial: int, num_tracks: Optional[int]) -> torch.Tensor:
     """
-    Converts a list of labels into a binary vector
+    Converts a list of labels into a binary tensor
     Args:
-        spatial: list of spatial coordinate lists
         label: list of integer labels
+        spatial: list of spatial coordinate lists
         num_labels: total number of labels
+        num_tracks: max number of tracks if multitrack
 
     Returns:
-        A float Tensor that is vector
+        A float Tensor
     """
     # 
-    spatial_matrix = torch.zeros((num_labels, num_spatial), dtype=torch.float)
-    for lbl_idx, spatial_vec in zip(label, spatial):
-        spatial_matrix[lbl_idx] = torch.Tensor(spatial_vec)
+    if num_tracks:
+        # ADPIT indexs based on the track index AND the number of class instances,
+        # so for a class instance with track index j with N class instances,
+        # the corresponding index for the track dimension will be (N(N-1)/2 + j),
+        num_tracks_adpit = (num_tracks * (num_tracks + 1)) // 2
+        spatial_tensor = torch.zeros((num_labels, num_tracks_adpit, num_spatial + 1), dtype=torch.float)
+        for lbl_idx, group in groupby(zip(label, spatial), key=lambda x: x[0][0]):
+            n_insts = len(group)
+            start = (n_insts * (n_insts - 1)) // 2
+            for track_idx, (_, spatial_vec) in enumerate(sorted(group, key=lambda x: tuple(x[0]))):
+                # First target corresponds to activity
+                spatial_tensor[lbl_idx, start + track_idx, 0] = 1.0
+                # Remaining target corresponds to spatial
+                spatial_tensor[lbl_idx, start + track_idx, 1:] = torch.Tensor(spatial_vec)
+        return spatial_tensor
+    else:
+        spatial_matrix = torch.zeros((num_labels, num_spatial + 1), dtype=torch.float)
+        for lbl_idx, spatial_vec in zip(label, spatial):
+            # First target corresponds to activity
+            spatial_matrix[lbl_idx, 0] = 1.0
+            # Remaining target corresponds to spatial
+            spatial_matrix[lbl_idx, 1:] = torch.Tensor(spatial_vec)
 
-    return spatial_matrix.flatten()
+        return spatial_matrix
 
 
 def validate_score_return_type(ret: Union[Tuple[Tuple[str, float], ...], float]):
@@ -351,16 +405,167 @@ class MeanAveragePrecision(ScoreFunction):
         return average_precision_score(targets, predictions, average="macro")
 
 
-class SELDScore(ScoreFunction):
+class HorizontalRegionIoUScore(ScoreFunction):
     """
-    Scores for sound event detection tasks using sed_eval
+    Scores for SELD tasks 
     """
 
     def __init__(
         self,
         label_to_idx: Dict[str, int],
         scores: Tuple[str],
-        params: Dict = None,
+        name: Optional[str] = None,
+        maximize: bool = True,
+        fov: float = 120,
+        num_regions: int = 5,
+        overlap_resolution_strategy: str = "interpolate",
+        pointwise: bool = True,
+        include_empty: bool = False,
+        soft_empty_iou: bool = False,
+    ):
+        """
+        :param scores: Scores to use, from the list of overall SELD eval scores.
+            The first score in the tuple will be the primary score for this metric
+        :param params: Parameters to pass to the scoring function,
+            see inheriting children for details.
+        """
+        super().__init__(label_to_idx=label_to_idx, name=name, maximize=maximize)
+        self.scores = scores
+        self.fov = fov
+        self.num_regions = num_regions
+        self.region_centers = ((np.arange(num_regions) + 0.5) / num_regions - 0.5) * fov
+        self.overlap_resolution_strategy = overlap_resolution_strategy
+        self.pointwise = pointwise
+        self.include_empty = include_empty
+        self.soft_empty_iou = soft_empty_iou
+
+
+    @staticmethod
+    def compute_iou(prediction_regions, target_regions):
+        n_overlap_regions = len(target_regions & prediction_regions)
+        n_target_regions = len(target_regions)
+        n_false_positive = len(prediction_regions - target_regions)
+        
+        iou = n_overlap_regions / (n_target_regions + n_false_positive)
+        return iou
+
+    def _compute(
+        self, predictions: Dict, targets: Dict,
+        **kwargs
+    ) -> Tuple[Tuple[str, float], ...]:
+
+        iou_micro_scores = []
+        classwise_iou_scores = {label: [] for label in self.label_to_idx.keys()}
+        for filename in targets:
+            prediction_event_list = predictions[filename]
+            target_event_list = targets[filename]
+
+            # A bit hacky, but it works?
+            # Get timestamp hop and maximum time from predictions and targets
+            hop_dur = None
+            max_time = -1
+            for target_event, prediction_event in zip(target_event_list, prediction_event_list):
+                if hop_dur is None:
+                    hop_dur = float(prediction_event["end"]) - float(prediction_event["start"])
+
+                max_end_time = max(
+                    float(target_event["end"]),
+                    float(prediction_event["end"]),
+                    max_end_time
+                )
+            # We only need to compute the metric for the timestamps where there
+            # is ground truth or a prediction
+            # (assume time starts at zero)
+            timestamps = np.arange(0.0, max_end_time, step=hop_dur)
+
+
+            pred_dict = {label: defaultdict(set) for label in self.label_to_idx.keys()}
+            for pred_event in prediction_event_list:
+                frame_idx = pred_event["frameidx"]
+                region_idx = pred_event["region"]
+                label = pred_event["label"]
+                pred_dict[label][frame_idx].add(region_idx)
+
+            target_label_list, target_spatial_list = get_labels_for_file_timestamps(
+                target_event_list,
+                timestamps,
+                spatial=True,
+                spatial_projection=(
+                    f"video_azimuth_region_"
+                    f"{'pointwise' if self.pointwise else 'boxwise'}"
+                ),
+                video_num_regions=self.num_regions,
+                video_fov=self.fov,
+                overlap_resolution_strategy=self.overlap_resolution_strategy,
+            )
+
+            classwise_frame_iou_lists = {label: [] for label in self.label_to_idx.keys()}
+            for frame_idx, (target_label_list, target_spatial_list) in enumerate(zip(target_label_list, target_spatial_list)):
+
+                # Compute IoU for non-empty frames in each class
+                for label, target_spatial in zip(target_label_list, target_spatial_list):
+                    prediction_regions = pred_dict[label][frame_idx] # also a set
+                    target_regions = set(target_spatial)
+                    iou = self.compute_iou(prediction_regions, target_regions)
+                    classwise_frame_iou_lists[label].append(iou)
+                    
+                if self.include_empty:
+                    # Compute IoU for empty frames
+                    active_target_labels = set(target_label_list)
+                    inactive_target_labels = set(
+                        label for label in self.label_to_idx.keys()
+                        if label not in active_target_labels
+                    )
+                    for label in inactive_target_labels:
+                        if self.soft_empty_iou:
+                            # IoU computed using complement sets corresponding to
+                            # empty prediction regions
+                            prediction_empty_regions = set(
+                                region for region in range(self.num_regions)
+                                if region not in pred_dict[label][frame_idx]
+                            )
+                            target_empty_regions = set(range(self.num_regions))
+                            iou = self.compute_iou(prediction_empty_regions, target_empty_regions)
+                        else:
+                            # IoU = 1 if no regions predicted, and 0 if any regions
+                            # are predicted
+                            iou = 1.0 if not pred_dict[label][frame_idx] else 0.0
+                        classwise_frame_iou_lists[label].append(iou)
+
+            for label, iou_list in classwise_frame_iou_lists.items():
+                classwise_iou_scores[label].append(np.mean(iou_list))
+
+            file_iou_micro_score = np.mean([
+                iou
+                for iou_list in classwise_frame_iou_lists.values()
+                for iou in iou_list
+            ])
+            iou_micro_scores.append(file_iou_micro_score)
+
+        iou_micro = np.mean(iou_micro_scores)
+        iou_macro = np.mean([
+            np.mean(iou_list)
+            for iou_list in classwise_iou_scores.values()
+        ])
+
+        overall_scores: Dict[str, float] = dict(
+            iou_micro=iou_micro,
+            iou_macro=iou_macro,
+        )
+        # Return the required scores as tuples. The scores are returned in the
+        # order they are passed in the `scores` argument
+        return tuple([(score, overall_scores[score]) for score in self.scores])
+
+
+class SELDScore(ScoreFunction):
+    """
+    Scores for SELD tasks 
+    """
+
+    def __init__(
+        self,
+        label_to_idx: Dict[str, int],
+        scores: Tuple[str],
         name: Optional[str] = None,
         doa_threshold: float = 20.0,
         maximize: bool = True,
@@ -377,7 +582,6 @@ class SELDScore(ScoreFunction):
         super().__init__(label_to_idx=label_to_idx, name=name, maximize=maximize)
         assert 0.0 <= doa_threshold <= 360.0
         self.scores = scores
-        self.params = params
         self.doa_threshold = doa_threshold
         self.segment_duration_ms = segment_duration_ms
 
@@ -436,7 +640,7 @@ class SELDScore(ScoreFunction):
         event_list = next(iter(x.values()))
         num_frames = 0
         total_time = 0.0
-        for event in sorted(event_list, key=lambda x: x['start']):
+        for event in sorted(event_list, key=lambda v: v['start']):
             frame_duration_ms = event['end'] - event['start']
             # break if adding this event would exceed the segment length
             if total_time + frame_duration_ms > duration_ms:
@@ -457,16 +661,19 @@ class SELDScore(ScoreFunction):
         out_dict = {}
         for filename, event_list in x.items():
             # ensure list is sorted
-            event_list = sorted(event_list, key=lambda x: x['start'])
+            event_list = sorted(event_list, key=lambda v: v['start'])
             num_frames = len(event_list)
             tmp_event_dict = {}
-            # dict[class-index][frame-index] = [doa]
-            # dictionary_name[segment-index][class-index] = list(frame-cnt-within-segment, azimuth, elevation)
+            # _pred_dict[frame_idx]: List[List[str, float, float, ...]]
             for frame_idx, event in enumerate(event_list):
                 class_idx = label_to_idx[event["label"]]
+                track_idx = event.get("trackidx", 0)
                 azi = event.get("azimuth", 0.0)
                 ele = event.get("elevation", 0.0)
-                tmp_event_dict[frame_idx] = [class_idx, azi, ele]
+                if frame_idx not in tmp_event_dict:
+                    tmp_event_dict[frame_idx] = []
+                # Basically replicates the DCASE csv format
+                tmp_event_dict[frame_idx].append([class_idx, track_idx, azi, ele])
 
             out_dict[filename] = segment_labels(
                 tmp_event_dict, num_frames, nb_label_frames_1s
@@ -561,7 +768,7 @@ available_scores: Dict[str, Callable] = {
     ),
     "segment_1s_seld": partial(
         SELDMetrics,
-        name="seld_micro_segment_1s",
+        name="segment_1s_seld",
         scores=(
             "score_macro", "score",
             "localization_score_macro", "localization_score",
@@ -571,6 +778,22 @@ available_scores: Dict[str, Callable] = {
         ),
         average="micro",
         segment_duration_ms=1000,
+    ),
+    "horiz_iou_120fov_5regions_pointwise": partial(
+        HorizontalRegionIoUScore,
+        name="horiz_iou_120fov_5regions_pointwise",
+        scores=("iou_micro", "iou_macro"),
+        fov=120,
+        num_regions=5,
+        pointwise=True,
+    ),
+    "horiz_iou_120fov_5regions_boxwise": partial(
+        HorizontalRegionIoUScore,
+        name="horiz_iou_120fov_5regions_boxwise",
+        scores=("iou_micro", "iou_macro"),
+        fov=120,
+        num_regions=5,
+        pointwise=False,
     ),
     "mAP": MeanAveragePrecision,
     "d_prime": DPrime,
