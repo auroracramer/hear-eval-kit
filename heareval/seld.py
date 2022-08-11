@@ -14,9 +14,13 @@
 #
 
 import numpy as np
+import numpy.linalg as la
 
 eps = np.finfo(np.float).eps
 from scipy.optimize import linear_sum_assignment
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
+from sklearn.metrics import pairwise_distances
 
 
 class SELDMetrics(object):
@@ -317,3 +321,34 @@ def segment_labels(_pred_dict, _max_frames, _nb_label_frames_1s):
             output_dict[block_cnt][class_cnt].append([keys, values])
 
     return output_dict
+
+
+def pairwise_angular_distance_between_cartesian_coordinates(V):
+    """
+    Angular distance between two cartesian coordinates
+    MORE: https://en.wikipedia.org/wiki/Great-circle_distance
+    Check 'From chord length' section
+
+    :return: angular distance in degrees
+    """
+    dists = pairwise_distances(V, metric='cosine')
+    dists = np.clip(dists, -1, 1)
+    return np.arccos(dists) * 180 / np.pi 
+
+
+def pairwise_determine_similar_location(sed, doa, thresh_unify):
+    sed = (sed == 1).astype(doa.dtype)
+    sed_mask = np.outer(sed, sed)
+    dists = pairwise_angular_distance_between_cartesian_coordinates(doa)
+    return (dists > thresh_unify) * sed_mask
+
+
+def get_merged_multitrack_seld_events(sed_pred, doa_pred, thresh_unify):
+    output = []
+    merge_matrix = pairwise_determine_similar_location(sed_pred, doa_pred, thresh_unify)
+    num_merges, merge_labels = connected_components(csgraph=csr_matrix(merge_matrix))
+    for merge_idx in range(num_merges):
+        merge_mask = merge_labels == merge_idx
+        doa_fc = doa_pred[merge_mask, :].mean(axis=0)
+        output.append(doa_fc)
+    return output
