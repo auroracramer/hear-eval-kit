@@ -34,18 +34,19 @@ import numpy as np
 import soundfile as sf
 import tensorflow as tf
 import torch
-from intervaltree import IntervalTree
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
 # import wandb
 import heareval.gpu_max_mem as gpu_max_mem
+from heareval.labels import get_labels_for_file_timestamps
 
 TORCH = "torch"
 TENSORFLOW = "tf"
 
 CHANNEL_FORMATS = {
     "seld": "stereo",
+    "avoseld_multiregion": "stereo",
     # multiclass and multilabel assumed to be mono
     "multiclass": "mono",
     "multilabel": "mono",
@@ -263,7 +264,7 @@ def save_timestamp_embedding_and_labels_and_spatial(
         json.dump(spatial[i], open(f"{out_file}.target-spatial.json", "w"), indent=4)
 
 
-def get_labels_for_timestamps(labels: List, timestamps: np.ndarray) -> List:
+def get_labels_for_timestamps(file_data_list: List, timestamps: np.ndarray, ntracks: Optional[int] = None) -> List:
     # -> List[List[List[str]]]:
     # -> List[List[str]]:
     # TODO: Is this function redundant?
@@ -271,23 +272,16 @@ def get_labels_for_timestamps(labels: List, timestamps: np.ndarray) -> List:
     timestamp_labels = []
 
     # NOTE: Make sure dataset events are specified in ms.
-    assert len(labels) == len(timestamps)
-    for i, label in enumerate(labels):
-        tree = IntervalTree()
-        # Add all events to the label tree
-        for event in label:
-            # We add 0.0001 so that the end also includes the event
-            tree.addi(event["start"], event["end"] + 0.0001, event["label"])
-
-        labels_for_sound = []
-        # Update the binary vector of labels with intervals for each timestamp
-        for j, t in enumerate(timestamps[i]):
-            interval_labels: List[str] = [interval.data for interval in tree[t]]
-            labels_for_sound.append(interval_labels)
-            # If we want to store the timestamp too
-            # labels_for_sound.append([float(t), interval_labels])
-
-        timestamp_labels.append(labels_for_sound)
+    assert len(file_data_list) == len(timestamps)
+    timestamp_labels = [
+        get_labels_for_file_timestamps(
+            file_data,
+            file_timestamps,
+            spatial=False,
+            ntracks=ntracks,
+        )
+        for file_data, file_timestamps in zip(file_data_list, timestamps)
+    ]
 
     assert len(timestamp_labels) == len(timestamps)
     return timestamp_labels
@@ -297,71 +291,30 @@ def get_labels_and_spatial_for_timestamps(
     file_data_list: List,
     timestamps: np.ndarray,
     spatial_projection: str,
+    ntracks: Optional[int] = None,
+    overlap_resolution_strategy: str = "closest",
+    video_fov: Optional[float] = None,
+    video_num_regions: Optional[int] = None,
 ) -> List:
     assert len(file_data_list) == len(timestamps)
 
     timestamp_labels = []
     timestamp_spatial = []
-
-    for i, file_data in enumerate(file_data_list):
-        tree = IntervalTree()
-        # Add all events to the label tree
-        for event in file_data:
-            azi, ele = float(event["azimuth"]), float(event["elevation"])
-                
-            assert -180 <= azi < 180, (
-                f"azimuth must be in range [-180, 180) but got {azi}"
-            )
-            assert -90 <= ele < 90, (
-                f"elevation must be in range [-90, 90) but got {ele}"
-            )
-
-            # Convert to radians
-            theta = np.deg2rad(azi)
-            # Account for egocentric vs. standard spherical phi convention too
-            phi = np.deg2rad(90.0 - ele)
-            rho = float(event.get("distance", 1.0))
-            x = rho * np.sin(phi) * np.cos(theta)
-            y = rho * np.sin(phi) * np.sin(theta)
-            z = rho * np.cos(phi)
-            
-            spatial: Tuple[float, ...]
-            if spatial_projection == "unit_xy_disc":
-                spatial = (x, y)
-            elif spatial_projection == "unit_yz_disc":
-                spatial = (y, z)
-            elif spatial_projection in ("unit_sphere", "none"):
-                spatial = (x, y, z)
-            else:
-                raise ValueError(f"Invalid spatial projection: {spatial_projection}")
-
-            # We add 0.0001 so that the end also includes the event
-            tree.addi(
-                event["start"],
-                event["end"] + 0.0001,
-                (event["label"], spatial)
-            )
-
-        labels_for_sound = []
-        spatial_for_sound = []
-        # Update the binary vector of labels with intervals for each timestamp
-        for j, t in enumerate(timestamps[i]):
-            interval_labels: Tuple[str, ...]
-            interval_spatial: Tuple[Tuple[float, ...], ...]
-            (interval_labels, interval_spatial) = (
-                tuple(zip(*[interval.data for interval in tree[t]])) or ((), ())
-            )
-            labels_for_sound.append(list(interval_labels))
-            spatial_for_sound.append(list(interval_spatial))
-
-            # If we want to store the timestamp too
-            # labels_for_sound.append([float(t), interval_labels])
-
+    for file_data, file_timestamps in zip(file_data_list, timestamps):
+        labels_for_sound, spatial_for_sound = get_labels_for_file_timestamps(
+            file_data,
+            file_timestamps,
+            spatial=True,
+            spatial_projection=spatial_projection,
+            ntracks=ntracks,
+            video_num_regions=video_num_regions,
+            video_fov=video_fov,
+            overlap_resolution_strategy=overlap_resolution_strategy,
+        )
         timestamp_labels.append(labels_for_sound)
         timestamp_spatial.append(spatial_for_sound)
 
     assert len(timestamp_labels) == len(timestamp_spatial) == len(timestamps)
-
     return timestamp_labels, timestamp_spatial
 
 
@@ -584,7 +537,18 @@ def task_embeddings(
                 if metadata["prediction_type"] == "seld":
                     labels, spatial = get_labels_and_spatial_for_timestamps(
                         file_data_list, timestamps,
-                        spatial_projection=metadata["spatial_projection"]
+                        spatial_projection=metadata["spatial_projection"],
+                        multitrack=metadata["multitrack"]
+                    )
+                    assert len(labels) == len(filenames)
+                    assert len(labels[0]) == len(timestamps[0])
+                    save_timestamp_embedding_and_labels_and_spatial(
+                        embeddings, timestamps, labels, spatial, filenames, outdir
+                    )
+                if metadata["prediction_type"] == "avoseld_multiregion":
+                    labels, spatial = get_labels_and_spatial_for_timestamps(
+                        file_data_list, timestamps,
+                        spatial_projection=metadata["spatial_projection"],
                     )
                     assert len(labels) == len(filenames)
                     assert len(labels[0]) == len(timestamps[0])
@@ -592,7 +556,7 @@ def task_embeddings(
                         embeddings, timestamps, labels, spatial, filenames, outdir
                     )
                 else:
-                    labels = get_labels_for_timestamps(labels, timestamps)
+                    labels = get_labels_for_timestamps(labels, timestamps, multitrack=metadata.get("multitrack", False))
                     assert len(labels) == len(filenames)
                     assert len(labels[0]) == len(timestamps[0])
                     save_timestamp_embedding_and_labels(
