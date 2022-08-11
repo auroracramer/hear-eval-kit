@@ -21,9 +21,12 @@ import random
 import sys
 import time
 from collections import defaultdict
+from itertools import permutations, product
+from functools import reduce
+from operator import mul
 from pathlib import Path
 from typing import (
-    Any, Callable, DefaultDict, Dict, List, Optional, Sequence, Tuple, Union
+    Any, DefaultDict, Dict, List, Optional, Sequence, Tuple, Union
 )
 
 import more_itertools
@@ -46,25 +49,18 @@ from tqdm.auto import tqdm
 from heareval.score import (
     ScoreFunction,
     available_scores,
-    label_to_binary_vector,
+    label_to_binary_tensor,
     label_vocab_as_dict,
-    spatial_to_vector,
+    label_spatial_to_tensor,
     spatial_projection_to_nspatial,
     validate_score_return_type,
 )
+from heareval.seld import get_merged_multitrack_seld_events
 
 TASK_SPECIFIC_PARAM_GRID = {
     "dcase2016_task2": {
         # sed_eval is very slow
         "check_val_every_n_epoch": [10],
-    },
-    "soundata_tau2021sse_nigens": {
-        "loss_weight_sed": [1.0],
-        "loss_weight_doa": [50.0],
-    },
-    "soundata_tau2021sse_nigens_xy": {
-        "loss_weight_sed": [1.0],
-        "loss_weight_doa": [50.0],
     },
 }
 
@@ -166,15 +162,110 @@ class BranchConsumerModule(torch.nn.Module):
     def forward(self, x_seq: Sequence[torch.Tensor]):
         return [branch(x) for x, branch in zip(x_seq, self.branches)]
 
-class BranchWeightedSumModule(torch.nn.Module):
-    def __init__(self, weights: Sequence[float]):
-        super(BranchConsumerModule, self).__init__()
-        self.weights = weights
+
+class BranchConcatModule(torch.nn.Module):
+    def __init__(self, concat_dim=-1):
+        super(BranchConcatModule, self).__init__()
+        self.concat_dim = concat_dim
     def forward(self, x_seq: Sequence[torch.Tensor]):
-        assert len(x_seq) == len(self.weights), (
-            f"Number of inputs ({len(x_seq)}) differs from number of weights ({len(self.weights)})"
+        return torch.cat(x_seq, dim=self.concat_dim)
+
+
+class ADPIT(torch.nn.Module):
+    def __init__(
+        self,
+        nlabels: int,
+        ntracks: int,
+        frame_dim: int = 1,
+        mask_prediction: bool = False,
+        base_loss: Optional[torch.nn.Module] = None
+    ) -> None:
+        super().__init__()
+        self.nlabels = nlabels
+        self.ntracks = ntracks
+        self.frame_dim = frame_dim
+        self.mask_prediction = mask_prediction
+        base_loss = base_loss or torch.nn.MSELoss(reduction="none")
+        assert (getattr(base_loss, "reduction", None) != "none"), (
+            "loss must have reduction='none'"
         )
-        return sum(weight * x for x, weight in zip(x_seq, self.weights))
+        self.base_loss = base_loss
+
+    def compute_base_loss(self, x: torch.Tensor, y: torch.Tensor):
+        return self.base_loss(x, y).mean(dim=self.frame_dim)
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor):
+        # pred:   (nbatch, nframes, nlabels, ntracks, nspatial)
+        # target: (nbatch, nframes, nlabels, ntracks_adpit, nspatial + 1)
+
+        if self.mask_prediction:
+            act = (pred.norm(dim=-1, keepdim=True) > 0.5)
+            pred = act * pred
+
+        # Mask spatial dimension by activity
+        target = target[..., 0:1] * target[..., 1:]
+
+        ninsts_perm_targets = []
+        for ninsts in range(1, self.ntracks + 1):
+            nrep = self.ntracks - ninsts 
+            base_idxs = tuple(range(ninsts))
+            curr_track_idxs = set()
+            # Get all unique permutations of track idxs including at least one
+            # occurrence of each active instance
+            for extra_idxs in product(base_idxs, repeat=nrep):
+                curr_track_idxs.update(permutations(base_idxs + extra_idxs, self.ntracks))
+
+            # Sort so we can easily get first occurrence
+            curr_track_idxs = sorted(curr_track_idxs)
+
+            # Compute offset corresponding to the number of instances
+            start_idx = (ninsts * (ninsts - 1)) // 2
+
+            curr_perm_targets = []
+            for perm in curr_track_idxs:
+                # Add offset to idxs
+                perm = tuple(x + start_idx for x in perm)
+                curr_perm_targets.append(target[..., perm, :])
+
+            ninsts_perm_targets.append(curr_perm_targets)
+
+        losses = []
+        for ninsts_m1, curr_perm_targets in enumerate(ninsts_perm_targets):
+            ninsts = ninsts_m1 + 1
+            # "Pad" each permutation loss to avoid choosing an invalid
+            # permutation with zero loss
+            # https://stackoverflow.com/a/61774748
+            padding = reduce(
+                torch.Tensor.add_,
+                [
+                    ninsts_perm_targets[idx][0]
+                    for idx in range(self.ntracks)
+                    if idx != ninsts_m1
+                ],
+                torch.zeros_like(curr_perm_targets[0]),
+            )
+
+            # Compute loss for each permutation target
+            for perm_target in curr_perm_targets:
+                loss = self.compute_base_loss(pred, perm_target + padding)
+                losses.append(loss)
+
+        # Get indices of minimum loss for each batch/frame/class
+        loss_min = torch.min(
+            torch.stack(losses, dim=0),
+        dim=0).indices
+
+        # Mask losses to obtain the minimum losses and average them
+        loss = reduce(
+            torch.Tensor.add_,
+            [
+                perm_loss * (loss_min == perm_idx)
+                for perm_idx, perm_loss in enumerate(losses)
+            ],
+            torch.zeros_like(losses[0]),
+        ).mean()
+
+        return loss
 
 
 class FullyConnectedPrediction(torch.nn.Module):
@@ -184,11 +275,16 @@ class FullyConnectedPrediction(torch.nn.Module):
         nlabels: int,
         prediction_type: str,
         conf: Dict,
-        nspatial: int = 3
+        nspatial: int,
+        ntracks: Optional[int],
+        nsublabels: Optional[int],
     ):
         super().__init__()
 
         self.prediction_type = prediction_type
+        self.multitrack = bool(ntracks)
+        self.ntracks = ntracks # for multitrack
+        self.nsublabels = nsublabels # for avoseld_multiregion
         hidden_modules: List[torch.nn.Module] = []
         curdim = nfeatures
         # Honestly, we don't really know what activation preceded
@@ -215,52 +311,57 @@ class FullyConnectedPrediction(torch.nn.Module):
         else:
             self.hidden = torch.nn.Identity()  # type: ignore
         
-        self.projection: torch.nn.Module
+        # Determine shape of prediction part of output shape (sans batch and frame dims)
+        if prediction_type == "multilabel" and self.multitrack:
+            pred_shape = (nlabels, ntracks)
+        elif prediction_type in ("multilabel", "multiclass"):
+            pred_shape = (nlabels,)
+        elif prediction_type in "avoseld_multiregion":
+            # Technically nsublabels could be used for other things, but
+            # let's not overcomplicate things for now
+            assert self.nsublabels
+            pred_shape = (nlabels, nsublabels)
+        elif prediction_type == "seld" and self.multitrack:
+            pred_shape = (nlabels, ntracks, nspatial)
+        elif prediction_type == "seld":
+            pred_shape = (nlabels, nspatial)
+        else:
+            raise ValueError(f"Unknown prediction_type {prediction_type}")
+
+        nout = reduce(mul, pred_shape, 1)
+
+        # Create projection layer
+        self.projection: torch.nn.Module = torch.nn.Linear(curdim, nout)
+        # Create reshape layer to get structured output
+        if len(pred_shape) > 1:
+            self.reshape = torch.nn.Unflatten(-1, pred_shape)
+        else:
+            self.reshape = None
+        conf["initialization"](
+            self.projection.weight, gain=torch.nn.init.calculate_gain(last_activation)
+        )
+
+        # Define activations and losses
         self.activation: torch.nn.Module
         self.loss: torch.nn.Module
         if prediction_type == "multilabel":
-            conf["initialization"](
-                projection.weight, gain=torch.nn.init.calculate_gain(last_activation)
-            )
-            self.projection = torch.nn.Linear(curdim, nlabels)
             self.activation = torch.nn.Sigmoid()
             self.loss = torch.nn.BCEWithLogitsLoss()
         elif prediction_type == "multiclass":
-            conf["initialization"](
-                projection.weight, gain=torch.nn.init.calculate_gain(last_activation)
-            )
-            self.projection = torch.nn.Linear(curdim, nlabels)
             self.activation = torch.nn.Softmax()
             self.loss = torch.nn.OneHotToCrossEntropyLoss()
         elif prediction_type == "seld":
-            cls_projection = torch.nn.Linear(curdim, nlabels)
-            spa_projection = torch.nn.Linear(curdim, nspatial * nlabels)
-            for projection in (cls_projection, spa_projection):
-                conf["initialization"](
-                    projection.weight,
-                    gain=torch.nn.init.calculate_gain(last_activation)
-                )
-            self.projection = BranchModule([
-                cls_projection,
-                torch.nn.Sequential([spa_projection, torch.nn.Tanh()])
-            ])
-            self.activation = BranchConsumerModule([
-                torch.nn.Sigmoid(),
-                torch.nn.Identity(),
-            ])
-            # TODO: Implement ACCDOA loss
-            self.loss = torch.nn.Sequential([
-                BranchConsumerModule([
-                    torch.nn.BCEWithLogitsLoss(),
-                    torch.nn.MSELoss(),
-                ]),
-                BranchWeightedSumModule([
-                    conf["loss_weight_sed"],
-                    conf["loss_weight_doa"],
-                ]),
-            ])
+            if self.multitrack:
+                self.loss = ADPIT(nlabels=nlabels, ntracks=ntracks)
+            else:
+                self.loss = torch.nn.MSELOSS()
+            self.activation = torch.nn.Tanh()
+        elif prediction_type == "avoseld_multiregion":
+            self.activation = torch.nn.Sigmoid()
+            self.loss = torch.nn.BCEWithLogitsLoss()
         else:
             raise ValueError(f"Unknown prediction_type {prediction_type}")
+
 
     def forward_loss_compatible(self, x: torch.Tensor) -> torch.Tensor:
         x = self.hidden(x)
@@ -283,7 +384,9 @@ class AbstractPredictionModel(pl.LightningModule):
         scores: List[ScoreFunction],
         conf: Dict,
         use_scoring_for_early_stopping: bool = True,
-        nspatial: int = 3,
+        nspatial: Optional[int] = None,
+        nsublabels: Optional[int] = None,
+        ntracks: Optional[int] = None,
     ):
         super().__init__()
 
@@ -293,7 +396,8 @@ class AbstractPredictionModel(pl.LightningModule):
         # Since we don't know how these embeddings are scaled
         self.layernorm = conf["embedding_norm"](nfeatures)
         self.predictor = FullyConnectedPrediction(
-            nfeatures, nlabels, prediction_type, conf, nspatial=nspatial
+            nfeatures, nlabels, prediction_type, conf,
+            nspatial=nspatial, ntracks=ntracks, nsublabels=nsublabels,
         )
         torchinfo.summary(self.predictor, input_size=(64, nfeatures))
         self.label_to_idx = label_to_idx
@@ -500,6 +604,8 @@ class EventPredictionModel(AbstractPredictionModel):
         conf: Dict,
         use_scoring_for_early_stopping: bool = True,
         spatial_projection: Optional[str] = None,
+        nsublabels: Optional[int] = None,
+        ntracks: Optional[int] = None,
     ):
         super().__init__(
             nfeatures=nfeatures,
@@ -510,6 +616,8 @@ class EventPredictionModel(AbstractPredictionModel):
             conf=conf,
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
             nspatial=spatial_projection_to_nspatial(spatial_projection),
+            nsublabels=nsublabels,
+            ntracks=ntracks,
         )
         self.target_events = {
             "val": validation_target_events,
@@ -519,6 +627,8 @@ class EventPredictionModel(AbstractPredictionModel):
         self.epoch_best_postprocessing: Dict[int, Tuple[Tuple[str, Any], ...]] = {}
         self.postprocessing_grid = postprocessing_grid
         self.spatial_projection = spatial_projection
+        self.nsublabels = nsublabels
+        self.ntracks = ntracks
 
     def epoch_best_postprocessing_or_default(
         self, epoch: int
@@ -581,6 +691,7 @@ class EventPredictionModel(AbstractPredictionModel):
                 self.postprocessing_grid,
                 postprocessing_cached,
                 spatial_projection=self.spatial_projection,
+                multitrack=bool(self.ntracks),
             )
 
             score_and_postprocessing = []
@@ -662,6 +773,8 @@ class SplitMemmapDataset(Dataset):
         in_memory: bool,
         metadata: bool,
         spatial_projection: Optional[str] = None,
+        ntracks: Optional[int] = None,
+        nsublabels: Optional[int] = None,
     ):
         self.embedding_path = embedding_path
         self.label_to_idx = label_to_idx
@@ -670,6 +783,8 @@ class SplitMemmapDataset(Dataset):
         self.embedding_type = embedding_type
         self.prediction_type = prediction_type
         self.nspatial = spatial_projection_to_nspatial(spatial_projection)
+        self.ntracks = ntracks
+        self.nsublabels = nsublabels
 
         self.dim = tuple(
             json.load(
@@ -725,50 +840,62 @@ class SplitMemmapDataset(Dataset):
         This allows us to have tensors that are all the same shape.
         Later we reduce this with an argmax to get the vocabulary indices.
         """
-        ys_label = []
-        ys_spatial = []
+        ys = []
 
         for idx in tqdm(range(len(self.labels))):
             labels = [self.label_to_idx[str(label)] for label in self.labels[idx]]
-            y_lbl = label_to_binary_vector(labels, self.nlabels)
-            ys_label.append(y_lbl)
-
             if self.prediction_type == "seld":
-                spatial = self.spatial[idx]
-                y_spa = spatial_to_vector(spatial, labels, self.nlabels, self.nspatial)
-                ys_spatial.append(y_spa)
+                y_lbl = label_spatial_to_tensor(
+                    labels,
+                    self.spatial[idx],
+                    self.nlabels,
+                    self.nspatial,
+                    num_tracks=self.ntracks
+                )
+            elif self.prediction_type == "avoseld_multiregion":
+                y_lbl = label_to_binary_tensor(
+                    labels,
+                    self.nlabels,
+                    num_sublabels=self.nsublabels,
+                )
+            else:
+                y_lbl = label_to_binary_tensor(
+                    labels,
+                    self.nlabels,
+                    num_tracks=self.ntracks
+                )
+            ys.append(y_lbl)
 
-        y_label = torch.stack(ys_label)
-        assert y_label.shape == (len(self.labels), self.nlabels)
-
+        self.y = torch.stack(ys)
         if self.prediction_type == "seld":
-            y_spatial = torch.stack(ys_spatial)
-            assert y_spatial.shape == (len(self.spatial), self.nspatial * self.nlabels)
-            self.y = [y_label, y_spatial]
+            if ntracks:
+                ntracksadpit = ((ntracks + 1) * ntracks) // 2
+                assert self.y.shape == (len(self.spatial), self.nlabels, ntracksadpit, self.nspatial + 1)
+            else:
+                assert self.y.shape == (len(self.spatial), self.nlabels, self.nspatial + 1)
+        elif self.prediction_type == "avoseld_multiregion":
+            assert self.y.shape == (len(self.labels), self.nlabels, self.nsublabels)
         else:
-            self.y = y_label
+            assert self.y.shape == (len(self.labels), self.nlabels)
 
-    def _get_y(self, idx):
-        if self.prediction_type == "seld":
-            return [_y[idx] for _y in self.y]
-        else:
-            return self.y[idx]
 
     def __len__(self) -> int:
         return self.dim[0]
 
     def __getitem__(self, idx) -> Tuple[torch.Tensor, Union[torch.Tensor, Sequence[torch.Tensor]], Dict[str, Any]]:
-        return self.embeddings[idx], self._get_y(idx), self.metadata[idx]
+        return self.embeddings[idx], self.y[idx], self.metadata[idx]
 
 
 def create_events_from_prediction(
-    prediction_dict: Dict[float, Union[torch.Tensor, List[torch.Tensor]]],
+    prediction_dict: Dict[float, torch.Tensor],
     idx_to_label: Dict[int, str],
     prediction_type: str,
     threshold: float = 0.5,
     median_filter_ms: float = 150,
     min_duration: float = 60.0,
     spatial_projection: Optional[str] = None,
+    multitrack: bool = False,
+    threshold_multitrack_unify: float = 30.0,
 ) -> List[Dict[str, Union[float, str]]]:
     """
     Takes a set of prediction tensors keyed on timestamps and generates events.
@@ -793,22 +920,33 @@ def create_events_from_prediction(
     """
     # Make sure the timestamps are in the correct order
     timestamps = np.array(sorted(prediction_dict.keys()))
-    ntime = len(timestamps)
-    nlabels = len(idx_to_label)
-    nspatial = spatial_projection_to_nspatial(spatial_projection)
 
     # Create a sorted numpy matrix of frame level predictions for this file. We convert
     # to a numpy array here before applying a median filter.
     spatial_predictions: Optional[np.ndarray] = None
     if prediction_type == "seld":
-        class_predictions, spatial_predictions = [
-            np.stack([v.detach().cpu().numpy() for v in pred_list])
-            for pred_list in zip(*(prediction_dict[t] for t in timestamps))
-        ]
-        spatial_predictions = spatial_predictions.reshape((ntime, nlabels, nspatial))
+        spatial_predictions = np.stack(
+            [
+                prediction_dict[t].detach().cpu().numpy()
+                for t in timestamps
+            ]
+        )
+        class_predictions = np.clip(spatial_predictions.norm(dim=-1), 0, 1)
+    elif prediction_type == "avoseld_multiregion":
+        spatial_predictions = np.stack(
+            [
+                prediction_dict[t].detach().cpu().numpy()
+                for t in timestamps
+            ]
+        )
+        # Take maximum of region probs as class probability
+        class_predictions = spatial_predictions.max(dim=-1)
     else:
         class_predictions = np.stack(
-            [prediction_dict[t].detach().cpu().numpy() for t in timestamps]
+            [
+                prediction_dict[t].detach().cpu().numpy()
+                for t in timestamps
+            ]
         )
 
     # Optionally apply a median filter here to smooth out events.
@@ -816,21 +954,23 @@ def create_events_from_prediction(
     if median_filter_ms:
         filter_width = int(round(median_filter_ms / ts_diff))
         if filter_width:
+            cls_filter_shape = (filter_width, 1)
+            if multitrack:
+                cls_filter_shape += (1,)
+            class_predictions = median_filter(class_predictions, size=cls_filter_shape),
+
             if prediction_type == "seld":
-                class_predictions = median_filter(class_predictions, size=(filter_width, 1)),
-                spatial_predictions = median_filter(spatial_predictions, size=(filter_width, 1, 1)),
-            else:
-                class_predictions = median_filter(predictions, size=(filter_width, 1))
+                spa_filter_shape += (filter_width, 1, 1)
+                if multitrack:
+                    spa_filter_shape += (1,)
+                spatial_predictions = median_filter(spatial_predictions, size=spa_filter_shape),
 
     # Convert probabilities to binary vectors based on threshold
     class_predictions = (class_predictions > threshold).astype(np.int8)
-    # vvv This probably isn't necessary since we only add events for active classes vvv
-    # Mask spatial predictions by class predictions
-    # if prediction_type == "seld":
-    #     spatial_predictions = np.expand_dims(class_predictions, axis=-1) * spatial_predictions
 
     events = []
     for label in range(class_predictions.shape[1]):
+        # Still works for multitrack :)
         for group in more_itertools.consecutive_groups(
             np.where(class_predictions[:, label])[0]
         ):
@@ -839,7 +979,6 @@ def create_events_from_prediction(
                 tuple(sorted(grouptuple)) == grouptuple
             ), f"{sorted(grouptuple)} != {grouptuple}"
             startidx, endidx = (grouptuple[0], grouptuple[-1])
-
             start = timestamps[startidx]
             end = timestamps[endidx]
             # Add event if greater than the minimum duration threshold
@@ -849,28 +988,64 @@ def create_events_from_prediction(
                     for tidx in range(startidx, endidx):
                         _start = timestamps[tidx]
                         _end = timestamps[tidx + 1]
-                        event = {"label": idx_to_label[label], "start": _start, "end": _end}
-                        spatial = spatial_predictions[label, tidx]
 
-                        # Convert Cartesian to spherical (in degrees)
-                        if spatial_projection in ("unit_xy_disc"):
-                            x, y = spatial
-                            event["azimuth"] = np.rad2deg(np.arctan2(y, x))
-                        elif spatial_projection in ("unit_yz_disc"):
-                            y, z = spatial
-                            event["elevation"] = np.rad2deg(np.arccos(z / np.sqrt(y*y + z*z)))
-                        elif not spatial_projection or spatial_projection in ("unit_sphere", "none"):
-                            x, y, z = spatial
-                            # For unit_sphere should we normalize or just ignore rho?
-                            rho = np.sqrt(x*x + y*y + z*z)
-                            event["azimuth"] = np.rad2deg(np.arctan2(y, x))
-                            event["elevation"] = np.rad2deg(np.arccos(z / rho))
-                            if spatial_projection != "unit_sphere":
-                                event["distance"] = rho
+                        activity = class_predictions[tidx, label]
+                        spatial = spatial_predictions[tidx, label]
 
-                        events.append(event)
+                        if multitrack:
+                            spatial_list = get_merged_multitrack_seld_events(
+                                activity,
+                                spatial,
+                                threshold_multitrack_unify
+                            )
+                        else:
+                            spatial_list = [spatial]
+
+                        for track_idx, track_doa in enumerate(spatial_list):
+                            event = {
+                                "label": idx_to_label[label],
+                                "start": _start,
+                                "end": _end,
+                                "trackidx": track_idx,
+                            }
+
+                            # Convert Cartesian to spherical (in degrees)
+                            if spatial_projection in ("unit_xy_disc"):
+                                x, y = track_doa
+                                event["azimuth"] = np.rad2deg(np.arctan2(y, x))
+                            elif spatial_projection in ("unit_yz_disc"):
+                                y, z = track_doa
+                                event["elevation"] = np.rad2deg(np.arccos(z / np.sqrt(y*y + z*z)))
+                            elif not spatial_projection or spatial_projection in ("unit_sphere", "none"):
+                                x, y, z = track_doa
+                                # For unit_sphere should we normalize or just ignore rho?
+                                rho = np.sqrt(x*x + y*y + z*z)
+                                event["azimuth"] = np.rad2deg(np.arctan2(y, x))
+                                event["elevation"] = np.rad2deg(np.arccos(z / rho))
+                                if spatial_projection != "unit_sphere":
+                                    event["distance"] = rho
+
+                            events.append(event)
+                elif prediction_type == "avoseld_multiregion":
+                    for tidx in range(startidx, endidx):
+                        _start = timestamps[tidx]
+                        _end = timestamps[tidx + 1]
+                        spatial = spatial_predictions[tidx, label]
+                        for region_idx in spatial.nonzero()[0]:
+                            event = {
+                                "label": idx_to_label[label],
+                                "region": region_idx,
+                                "start": _start,
+                                "end": _end,
+                                "frameidx": tidx,
+                            }
+                            events.append(event)
                 else:
-                    event = {"label": idx_to_label[label], "start": start, "end": end}
+                    event = {
+                        "label": idx_to_label[label],
+                        "start": start,
+                        "end": end
+                    }
                     events.append(event)
 
     # This is just for pretty output, not really necessary
@@ -887,6 +1062,7 @@ def get_events_for_all_files(
     postprocessing_grid: Dict[str, List[float]],
     postprocessing: Optional[Tuple[Tuple[str, Any], ...]] = None,
     spatial_projection: Optional[str] = None,
+    multitrack: bool = False,
 ) -> Dict[Tuple[Tuple[str, Any], ...], Dict[str, List[Dict[str, Union[str, float]]]]]:
     """
     Produces lists of events from a set of frame based label probabilities.
@@ -938,10 +1114,7 @@ def get_events_for_all_files(
             event_files[slug] = {}
 
         # Save the predictions for the file keyed on the timestamp
-        if prediction_type == "seld":
-            event_files[slug][float(timestamp)] = [v[i] for v in predictions]
-        else:
-            event_files[slug][float(timestamp)] = predictions[i]
+        event_files[slug][float(timestamp)] = predictions[i]
 
     # Create events for all the different files. Store all the events as a dictionary
     # with the same format as the ground truth from the luigi pipeline.
@@ -965,7 +1138,8 @@ def get_events_for_all_files(
             for slug, timestamp_predictions in event_files.items():
                 event_dict[postprocess][slug] = create_events_from_prediction(
                     timestamp_predictions, idx_to_label, prediction_type,
-                    spatial_projection=spatial_projection, **postprocess_dict
+                    spatial_projection=spatial_projection, multitrack=multitrack,
+                    **postprocess_dict
                 )
 
     return event_dict
@@ -1127,7 +1301,7 @@ def task_predictions_train(
 
     start = time.time()
     predictor: AbstractPredictionModel
-    if metadata["embedding_type"] in ("event", "seld"):
+    if metadata["embedding_type"] in ("event", "seld", "avoseld_multiregion"):
 
         def _combine_target_events(split_names: List[str]):
             """
@@ -1182,6 +1356,8 @@ def task_predictions_train(
             postprocessing_grid=postprocessing_grid,
             conf=conf,
             spatial_projection=metadata.get("spatial_projection"),
+            ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
+            nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
         )
     elif metadata["embedding_type"] == "scene":
