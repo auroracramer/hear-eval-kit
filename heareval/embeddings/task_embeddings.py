@@ -538,7 +538,10 @@ def task_embeddings(
                     labels, spatial = get_labels_and_spatial_for_timestamps(
                         file_data_list, timestamps,
                         spatial_projection=metadata["spatial_projection"],
-                        multitrack=metadata["multitrack"]
+                        ntracks=(
+                            metadata["num_tracks"]
+                            if metadata.get("multitrack") else None
+                        ),
                     )
                     assert len(labels) == len(filenames)
                     assert len(labels[0]) == len(timestamps[0])
@@ -556,7 +559,13 @@ def task_embeddings(
                         embeddings, timestamps, labels, spatial, filenames, outdir
                     )
                 else:
-                    labels = get_labels_for_timestamps(labels, timestamps, multitrack=metadata.get("multitrack", False))
+                    labels = get_labels_for_timestamps(
+                        labels, timestamps,
+                        ntracks=(
+                            metadata["num_tracks"]
+                            if metadata.get("multitrack") else None
+                        ),
+                    )
                     assert len(labels) == len(filenames)
                     assert len(labels[0]) == len(timestamps[0])
                     save_timestamp_embedding_and_labels(
