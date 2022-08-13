@@ -548,7 +548,7 @@ def task_embeddings(
                     save_timestamp_embedding_and_labels_and_spatial(
                         embeddings, timestamps, labels, spatial, filenames, outdir
                     )
-                if metadata["prediction_type"] == "avoseld_multiregion":
+                elif metadata["prediction_type"] == "avoseld_multiregion":
                     labels, spatial = get_labels_and_spatial_for_timestamps(
                         file_data_list, timestamps,
                         spatial_projection=metadata["spatial_projection"],
