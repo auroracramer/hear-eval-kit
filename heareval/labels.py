@@ -1,6 +1,6 @@
 import numpy as np
 from itertools import groupby
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from intervaltree import Interval, IntervalTree
 
@@ -146,7 +146,7 @@ def get_timestamp_spatial_label(
         spatial_data = interval_list[0].data[1]
     elif overlap_resolution_strategy == "closest":
         # Chose the closest value to t (w.r.t. begin time)
-        spatial_data = min(interval_list, key=get_interval_dist).data[1]
+        spatial_data = min(interval_list, key=partial(get_interval_dist, t=t)).data[1]
     elif overlap_resolution_strategy == "interpolate":
         # Linearly interpolate between the closests values
         # before and after t (w.r.t. begin time)
