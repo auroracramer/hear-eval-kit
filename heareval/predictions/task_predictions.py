@@ -316,7 +316,7 @@ class FullyConnectedPrediction(torch.nn.Module):
             pred_shape = (nlabels, ntracks)
         elif prediction_type in ("multilabel", "multiclass"):
             pred_shape = (nlabels,)
-        elif prediction_type in "avoseld_multiregion":
+        elif prediction_type == "avoseld_multiregion":
             # Technically nsublabels could be used for other things, but
             # let's not overcomplicate things for now
             assert self.nsublabels
