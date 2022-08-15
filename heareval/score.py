@@ -776,7 +776,6 @@ available_scores: Dict[str, Callable] = {
             "error_rate_macro", "error_rate",
             "f_measure_macro", "f_measure"
         ),
-        average="micro",
         segment_duration_ms=1000,
     ),
     "horiz_iou_120fov_5regions_pointwise": partial(
