@@ -577,8 +577,6 @@ class SELDScore(ScoreFunction):
         :param params: Parameters to pass to the scoring function,
             see inheriting children for details.
         """
-        if params is None:
-            params = {}
         super().__init__(label_to_idx=label_to_idx, name=name, maximize=maximize)
         assert 0.0 <= doa_threshold <= 360.0
         self.scores = scores
