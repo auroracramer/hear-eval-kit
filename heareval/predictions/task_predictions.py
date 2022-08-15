@@ -186,7 +186,7 @@ class ADPIT(torch.nn.Module):
         self.frame_dim = frame_dim
         self.mask_prediction = mask_prediction
         base_loss = base_loss or torch.nn.MSELoss(reduction="none")
-        assert (getattr(base_loss, "reduction", None) != "none"), (
+        assert (getattr(base_loss, "reduction", None) == "none"), (
             "loss must have reduction='none'"
         )
         self.base_loss = base_loss
