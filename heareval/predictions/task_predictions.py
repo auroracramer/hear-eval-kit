@@ -843,7 +843,12 @@ class SplitMemmapDataset(Dataset):
         ys = []
 
         for idx in tqdm(range(len(self.labels))):
-            labels = [self.label_to_idx[str(label)] for label in self.labels[idx]]
+            labels = [
+                ((self.label_to_idx[str(label[0])],) + tuple(label[1:]))
+                if isinstance(label, (list, tuple))
+                else self.label_to_idx[str(label)] 
+                for label in self.labels[idx]
+            ]
             if self.prediction_type == "seld":
                 y_lbl = label_spatial_to_tensor(
                     labels,
