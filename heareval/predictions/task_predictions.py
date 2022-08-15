@@ -366,6 +366,8 @@ class FullyConnectedPrediction(torch.nn.Module):
     def forward_loss_compatible(self, x: torch.Tensor) -> torch.Tensor:
         x = self.hidden(x)
         x = self.projection(x)
+        if isinstance(self.reshape, torch.nn.Module):
+            x = self.reshape(x)
         return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
