@@ -767,7 +767,7 @@ available_scores: Dict[str, Callable] = {
         maximize=False,
     ),
     "segment_1s_seld": partial(
-        SELDMetrics,
+        SELDScore,
         name="segment_1s_seld",
         scores=(
             "score_macro", "score",
