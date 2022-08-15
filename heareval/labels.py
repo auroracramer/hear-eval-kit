@@ -43,7 +43,7 @@ def get_event_spatial_label(
         if projection == "video_azimuth_region_pointwise":
             spatial = (event["azimuth"],)
         else:
-            spatial = (event["azimuth_left"], event["azimuth_right"])
+            spatial = (event["azimuthleft"], event["azimuthright"])
     else:
         raise ValueError(f"Invalid spatial projection: {projection}")
 
