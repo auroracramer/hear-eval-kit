@@ -961,7 +961,7 @@ def create_events_from_prediction(
             ]
         )
         # Take maximum of region probs as class probability
-        class_predictions = spatial_predictions.max(dim=-1)
+        class_predictions = spatial_predictions.max(axis=-1)
     else:
         class_predictions = np.stack(
             [
@@ -978,13 +978,13 @@ def create_events_from_prediction(
             cls_filter_shape = (filter_width, 1)
             if multitrack:
                 cls_filter_shape += (1,)
-            class_predictions = median_filter(class_predictions, size=cls_filter_shape),
+            class_predictions = median_filter(class_predictions, size=cls_filter_shape)
 
             if prediction_type == "seld":
                 spa_filter_shape = (filter_width, 1, 1)
                 if multitrack:
                     spa_filter_shape += (1,)
-                spatial_predictions = median_filter(spatial_predictions, size=spa_filter_shape),
+                spatial_predictions = median_filter(spatial_predictions, size=spa_filter_shape)
 
     # Convert probabilities to binary vectors based on threshold
     class_predictions = (class_predictions > threshold).astype(np.int8)
@@ -1017,7 +1017,7 @@ def create_events_from_prediction(
                             spatial_list = get_merged_multitrack_seld_events(
                                 activity,
                                 spatial,
-                                threshold_multitrack_unify
+                                threshold_multitrack_unify,
                             )
                         else:
                             spatial_list = [spatial]
@@ -1065,7 +1065,7 @@ def create_events_from_prediction(
                     event = {
                         "label": idx_to_label[label],
                         "start": start,
-                        "end": end
+                        "end": end,
                     }
                     events.append(event)
 
