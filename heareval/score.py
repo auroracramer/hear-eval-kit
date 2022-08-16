@@ -1,18 +1,17 @@
 """
 Common utils for scoring.
 """
+from bisect import bisect
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 from collections import ChainMap, defaultdict
 from operator import itemgetter
 from itertools import groupby
-from xml.etree.ElementInclude import include
 
 import numpy as np
 import pandas as pd
 import sed_eval
 import torch
-import intervaltree
 from sklearn.metrics import average_precision_score, roc_auc_score
 from scipy import stats
 from heareval.seld import SELDMetrics, segment_labels
@@ -452,7 +451,7 @@ class HorizontalRegionIoUScore(ScoreFunction):
         return iou
 
     def _compute(
-        self, predictions: Dict, targets: Dict,
+        self, predictions: Dict, targets: Dict, file_timestamps: Dict,
         **kwargs
     ) -> Tuple[Tuple[str, float], ...]:
 
@@ -461,25 +460,7 @@ class HorizontalRegionIoUScore(ScoreFunction):
         for filename in targets:
             prediction_event_list = predictions[filename]
             target_event_list = targets[filename]
-
-            # A bit hacky, but it works?
-            # Get timestamp hop and maximum time from predictions and targets
-            hop_dur = None
-            max_time = -1
-            for target_event, prediction_event in zip(target_event_list, prediction_event_list):
-                if hop_dur is None:
-                    hop_dur = float(prediction_event["end"]) - float(prediction_event["start"])
-
-                max_end_time = max(
-                    float(target_event["end"]),
-                    float(prediction_event["end"]),
-                    max_end_time
-                )
-            # We only need to compute the metric for the timestamps where there
-            # is ground truth or a prediction
-            # (assume time starts at zero)
-            timestamps = np.arange(0.0, max_end_time, step=hop_dur)
-
+            timestamps = file_timestamps[filename]
 
             pred_dict = {label: defaultdict(set) for label in self.label_to_idx.keys()}
             for pred_event in prediction_event_list:
@@ -586,7 +567,7 @@ class SELDScore(ScoreFunction):
         self.segment_duration_ms = segment_duration_ms
 
     def _compute(
-        self, predictions: Dict, targets: Dict,
+        self, predictions: Dict, targets: Dict, file_timestamps: Dict,
         **kwargs
     ) -> Tuple[Tuple[str, float], ...]:
         scores = SELDMetrics(
@@ -595,8 +576,18 @@ class SELDScore(ScoreFunction):
         )
 
         # Convert predictions/targets to SELD compatible format
-        predictions = self.seld_eval_event_container(predictions, self.label_to_idx, self.segment_duration_ms)
-        targets = self.seld_eval_event_container(targets, self.label_to_idx, self.segment_duration_ms)
+        predictions = self.seld_eval_event_container(
+            predictions,
+            file_timestamps,
+            self.label_to_idx,
+            self.segment_duration_ms
+        )
+        targets = self.seld_eval_event_container(
+            targets,
+            file_timestamps,
+            self.label_to_idx,
+            self.segment_duration_ms
+        )
 
         for filename in predictions:
             scores.update_seld_scores(
@@ -653,6 +644,7 @@ class SELDScore(ScoreFunction):
     @staticmethod
     def seld_eval_event_container(
         x: Dict[str, List[Dict[str, Any]]],
+        file_timestamps: Dict[str, Sequence[float]],
         label_to_idx: Dict[str, int],
         segment_duration_ms: int,
     ) -> Dict:
@@ -663,9 +655,16 @@ class SELDScore(ScoreFunction):
             # ensure list is sorted
             event_list = sorted(event_list, key=lambda v: v['start'])
             num_frames = len(event_list)
+            timestamps = file_timestamps[filename]
             tmp_event_dict = {}
             # _pred_dict[frame_idx]: List[List[str, float, float, ...]]
-            for frame_idx, event in enumerate(event_list):
+            for event in event_list:
+                frame_idx = event.get("frameidx")
+                if frame_idx is None:
+                    # TODO: maybe need to use intervaltree interpolation,
+                    #       but for now just use bisect
+                    # Assumes timestamps are sorted
+                    frame_idx = bisect(timestamps, event["start"]) - 1
                 class_idx = label_to_idx[event["label"]]
                 track_idx = event.get("trackidx", 0)
                 azi = event.get("azimuth", 0.0)

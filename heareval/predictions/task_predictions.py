@@ -466,13 +466,13 @@ class AbstractPredictionModel(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         return self._step(batch, batch_idx)
 
-    def log_scores(self, name: str, score_args):
+    def log_scores(self, name: str, score_args, **score_kwargs):
         """Logs the metric score value for each score defined for the model"""
         assert hasattr(self, "scores"), "Scores for the model should be defined"
         end_scores = {}
         # The first score in the first `self.scores` is the optimization criterion
         for score in self.scores:
-            score_ret = score(*score_args)
+            score_ret = score(*score_args, **score_kwargs)
             validate_score_return_type(score_ret)
             # If the returned score is a tuple, store each subscore as separate entry
             if isinstance(score_ret, tuple):
@@ -699,6 +699,8 @@ class EventPredictionModel(AbstractPredictionModel):
         # print("\n\n\n", epoch)
 
         if name == "test" or self.use_scoring_for_early_stopping:
+            file_timestamps = dict(zip(filename, timestamp))
+
             predicted_events_by_postprocessing = get_events_for_all_files(
                 prediction,
                 filename,
@@ -719,6 +721,7 @@ class EventPredictionModel(AbstractPredictionModel):
                     # predicted_events, self.target_events[name]
                     predicted_events,
                     self.target_events[name],
+                    file_timestamps=file_timestamps,
                 )
                 # If the score returns a tuple of scores, the first score
                 # is used
@@ -768,7 +771,9 @@ class EventPredictionModel(AbstractPredictionModel):
                 }
 
             self.log_scores(
-                name, score_args=(predicted_events, self.target_events[name])
+                name,
+                score_args=(predicted_events, self.target_events[name]),
+                file_timestamps=file_timestamps,
             )
 
 
@@ -1104,6 +1109,7 @@ def create_events_from_prediction(
                                 "start": _start,
                                 "end": _end,
                                 "trackidx": track_idx,
+                                "frameidx": tidx,
                             }
 
                             # Convert Cartesian to spherical (in degrees)
