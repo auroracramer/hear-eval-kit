@@ -132,7 +132,7 @@ def label_spatial_to_tensor(label: List, spatial: List, num_labels: int, num_spa
                 # First target corresponds to activity
                 spatial_tensor[lbl_idx, start + track_idx, 0] = 1.0
                 # Remaining target corresponds to spatial
-                spatial_tensor[lbl_idx, start + track_idx, 1:] = torch.Tensor(spatial_vec)
+                spatial_tensor[lbl_idx, start + track_idx, 1:] = torch.tensor(spatial_vec)
         return spatial_tensor
     else:
         spatial_matrix = torch.zeros((num_labels, num_spatial + 1), dtype=torch.float)
@@ -140,7 +140,7 @@ def label_spatial_to_tensor(label: List, spatial: List, num_labels: int, num_spa
             # First target corresponds to activity
             spatial_matrix[lbl_idx, 0] = 1.0
             # Remaining target corresponds to spatial
-            spatial_matrix[lbl_idx, 1:] = torch.Tensor(spatial_vec)
+            spatial_matrix[lbl_idx, 1:] = torch.tensor(spatial_vec)
 
         return spatial_matrix
 
