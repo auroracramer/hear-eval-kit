@@ -94,7 +94,7 @@ def build_label_interval_tree(
     return tree
 
 
-@lru_cache
+@lru_cache(maxsize=None)
 def get_video_azimuth_region_centers(num_regions: int, fov: float) -> np.ndarray:
     """ Get uniformly spaced azimuth region centers """
     region_centers = ((np.arange(num_regions) + 0.5) / num_regions - 0.5) * fov
