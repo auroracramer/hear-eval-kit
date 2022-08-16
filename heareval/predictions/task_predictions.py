@@ -176,7 +176,7 @@ class ADPIT(torch.nn.Module):
         self,
         nlabels: int,
         ntracks: int,
-        frame_dim: int = 1,
+        frame_dim: Optional[int] = None,
         mask_prediction: bool = False,
         base_loss: Optional[torch.nn.Module] = None
     ) -> None:
@@ -192,17 +192,26 @@ class ADPIT(torch.nn.Module):
         self.base_loss = base_loss
 
     def compute_base_loss(self, x: torch.Tensor, y: torch.Tensor):
-        return self.base_loss(x, y).mean(dim=self.frame_dim)
+        loss = self.base_loss(x, y)
+        if self.frame_dim is not None:
+            return loss.mean(dim=self.frame_dim)
+        else:
+            return loss
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor):
         # pred:   (nbatch, nframes, nlabels, ntracks, nspatial)
         # target: (nbatch, nframes, nlabels, ntracks_adpit, nspatial + 1)
 
         # SANITY CHECK
-        nbatch_1, nframes_1, nlabels_1, ntracks_1, nspatial_1 = pred.shape
-        nbatch_2, nframes_2, nlabels_2, ntracks_adapit_2, nspatialp1_2 = target.shape
+        if self.frame_dim is not None:
+            nbatch_1, nframes_1, nlabels_1, ntracks_1, nspatial_1 = pred.shape
+            nbatch_2, nframes_2, nlabels_2, ntracks_adapit_2, nspatialp1_2 = target.shape
+            assert nframes_1 == nframes_2
+        else:
+            nbatch_1, nlabels_1, ntracks_1, nspatial_1 = pred.shape
+            nbatch_2, nlabels_2, ntracks_adapit_2, nspatialp1_2 = target.shape
+
         assert nbatch_1 == nbatch_2
-        assert nframes_1 == nframes_2
         assert nlabels_1 == nlabels_2
         assert ((ntracks_1 * (ntracks_1 + 1)) // 2) == ntracks_adapit_2
         assert (nspatial_1 + 1) == nspatialp1_2
@@ -235,9 +244,7 @@ class ADPIT(torch.nn.Module):
                 # Add offset to idxs
                 perm = tuple(x + start_idx for x in perm)
                 perm_target = target[..., perm, :]
-                assert perm_target.shape == (
-                    nbatch_1, nframes_1, nlabels_1, ntracks_1, nspatial_1
-                )
+                assert perm_target.shape == pred.shape
                 curr_perm_targets.append(perm_target)
 
             ninsts_perm_targets.append(curr_perm_targets)
@@ -257,19 +264,15 @@ class ADPIT(torch.nn.Module):
                 ],
                 torch.zeros_like(curr_perm_targets[0]),
             )
-            assert padding.shape == (
-                nbatch_1, nframes_1, nlabels_1, ntracks_1, nspatial_1
-            )
+            assert padding.shape == pred.shape
 
             # Compute loss for each permutation target
             for perm_target in curr_perm_targets:
-                assert perm_target.shape == (
-                    nbatch_1, nframes_1, nlabels_1, ntracks_1, nspatial_1
-                )
+                assert perm_target.shape == pred.shape
                 loss = self.compute_base_loss(pred, perm_target + padding)
                 losses.append(loss)
 
-        # Get indices of minimum loss for each batch/frame/class
+        # Get indices of minimum loss for each batch/class
         loss_min = torch.min(
             torch.stack(losses, dim=0),
         dim=0).indices
