@@ -699,7 +699,10 @@ class EventPredictionModel(AbstractPredictionModel):
         # print("\n\n\n", epoch)
 
         if name == "test" or self.use_scoring_for_early_stopping:
-            file_timestamps = dict(zip(filename, timestamp))
+            file_timestamps = {
+                Path(fname).name: ts
+                for fname, ts in zip(filename, timestamp)
+            }
 
             predicted_events_by_postprocessing = get_events_for_all_files(
                 prediction,
