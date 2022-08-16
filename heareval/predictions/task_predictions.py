@@ -198,6 +198,15 @@ class ADPIT(torch.nn.Module):
         # pred:   (nbatch, nframes, nlabels, ntracks, nspatial)
         # target: (nbatch, nframes, nlabels, ntracks_adpit, nspatial + 1)
 
+        # SANITY CHECK
+        nbatch_1, nframes_1, nlabels_1, ntracks_1, nspatial_1 = pred.shape
+        nbatch_2, nframes_2, nlabels_2, ntracks_adapit_2, nspatialp1_2 = target.shape
+        assert nbatch_1 == nbatch_2
+        assert nframes_1 == nframes_2
+        assert nlabels_1 == nlabels_2
+        assert ((ntracks_1 * (ntracks_1 + 1)) // 2) == ntracks_adapit_2
+        assert (nspatial_1 + 1) == nspatialp1_2
+
         if self.mask_prediction:
             act = (pred.norm(dim=-1, keepdim=True) > 0.5)
             pred = act * pred
@@ -225,7 +234,11 @@ class ADPIT(torch.nn.Module):
             for perm in curr_track_idxs:
                 # Add offset to idxs
                 perm = tuple(x + start_idx for x in perm)
-                curr_perm_targets.append(target[..., perm, :])
+                perm_target = target[..., perm, :]
+                assert perm_target.shape == (
+                    nbatch_1, nframes_1, nlabels_1, ntracks_1, nspatial_1
+                )
+                curr_perm_targets.append(perm_target)
 
             ninsts_perm_targets.append(curr_perm_targets)
 
@@ -238,15 +251,21 @@ class ADPIT(torch.nn.Module):
             padding = reduce(
                 torch.Tensor.add_,
                 [
-                    ninsts_perm_targets[idx][0]
-                    for idx in range(self.ntracks)
+                    other_perm_targets[0]
+                    for idx, other_perm_targets in enumerate(ninsts_perm_targets)
                     if idx != ninsts_m1
                 ],
                 torch.zeros_like(curr_perm_targets[0]),
             )
+            assert padding.shape == (
+                nbatch_1, nframes_1, nlabels_1, ntracks_1, nspatial_1
+            )
 
             # Compute loss for each permutation target
             for perm_target in curr_perm_targets:
+                assert perm_target.shape == (
+                    nbatch_1, nframes_1, nlabels_1, ntracks_1, nspatial_1
+                )
                 loss = self.compute_base_loss(pred, perm_target + padding)
                 losses.append(loss)
 
