@@ -72,6 +72,7 @@ def label_to_binary_tensor(
         binary_labels = torch.zeros(shape)
         # https://github.com/sharathadavanne/seld-dcase2022/blob/main/cls_feature_class.py#L242
         for lbl_idx, group in groupby(label, key=itemgetter(0)):
+            group = tuple(group)
             num_insts = len(group)
             start = (num_insts * (num_insts - 1)) // 2
             end = start + num_insts
@@ -126,6 +127,7 @@ def label_spatial_to_tensor(label: List, spatial: List, num_labels: int, num_spa
         num_tracks_adpit = (num_tracks * (num_tracks + 1)) // 2
         spatial_tensor = torch.zeros((num_labels, num_tracks_adpit, num_spatial + 1), dtype=torch.float)
         for lbl_idx, group in groupby(zip(label, spatial), key=lambda x: x[0][0]):
+            group = tuple(group)
             n_insts = len(group)
             start = (n_insts * (n_insts - 1)) // 2
             for track_idx, (_, spatial_vec) in enumerate(sorted(group, key=lambda x: tuple(x[0]))):
