@@ -225,7 +225,7 @@ class ADPIT(torch.nn.Module):
 
         ninsts_perm_targets = []
         for ninsts in range(1, self.ntracks + 1):
-            nrep = self.ntracks - ninsts 
+            nrep = self.ntracks - ninsts
             base_idxs = tuple(range(ninsts))
             curr_track_idxs = set()
             # Get all unique permutations of track idxs including at least one
@@ -332,7 +332,7 @@ class FullyConnectedPrediction(torch.nn.Module):
             self.hidden = torch.nn.Sequential(*hidden_modules)
         else:
             self.hidden = torch.nn.Identity()  # type: ignore
-        
+
         # Determine shape of prediction part of output shape (sans batch and frame dims)
         if prediction_type == "multilabel" and self.multitrack:
             pred_shape = (nlabels, ntracks)
@@ -861,7 +861,7 @@ class SplitMemmapDataset(Dataset):
             labels = [
                 ((self.label_to_idx[str(label[0])],) + tuple(label[1:]))
                 if isinstance(label, (list, tuple))
-                else self.label_to_idx[str(label)] 
+                else self.label_to_idx[str(label)]
                 for label in self.labels[idx]
             ]
             if self.prediction_type == "seld":
@@ -1118,8 +1118,8 @@ def get_events_for_all_files(
     """
     # This probably could be more efficient if we make the assumption that
     # timestamps are in sorted order. But this makes sure of it.
-        assert predictions.shape[0] == len(filenames)
-        assert predictions.shape[0] == len(timestamps)
+    assert predictions.shape[0] == len(filenames)
+    assert predictions.shape[0] == len(timestamps)
     event_files: Dict[str, Dict[float, Union[torch.Tensor, List[torch.Tensor]]]] = {}
     for i, (filename, timestamp) in enumerate(zip(filenames, timestamps)):
         slug = Path(filename).name
