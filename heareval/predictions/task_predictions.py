@@ -1194,6 +1194,8 @@ def dataloader_from_split_name(
     batch_size: int = 64,
     pin_memory: bool = True,
     spatial_projection: Optional[str] = None,
+    ntracks: Optional[int] = None,
+    nsublabels: Optional[int] = None,
 ) -> DataLoader:
     """
     Get the dataloader for a `split_name` or a list of `split_name`
@@ -1224,6 +1226,8 @@ def dataloader_from_split_name(
                     in_memory=in_memory,
                     metadata=metadata,
                     spatial_projection=spatial_projection,
+                    ntracks=ntracks,
+                    nsublabels=nsublabels,
                 )
                 for name in split_name
             ]
@@ -1239,6 +1243,8 @@ def dataloader_from_split_name(
             in_memory=in_memory,
             metadata=metadata,
             spatial_projection=spatial_projection,
+            ntracks=ntracks,
+            nsublabels=nsublabels,
         )
     else:
         raise ValueError("split_name should be a list or string")
@@ -1451,6 +1457,8 @@ def task_predictions_train(
         in_memory=in_memory,
         metadata=False,
         spatial_projection=metadata.get("spatial_projection"),
+        ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
+        nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
     )
     valid_dataloader = dataloader_from_split_name(
         data_splits["valid"],
@@ -1462,6 +1470,8 @@ def task_predictions_train(
         batch_size=conf["batch_size"],
         in_memory=in_memory,
         spatial_projection=metadata.get("spatial_projection"),
+        ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
+        nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
     )
     trainer.fit(predictor, train_dataloader, valid_dataloader)
     if checkpoint_callback.best_model_score is not None:
@@ -1517,6 +1527,8 @@ def task_predictions_test(
         batch_size=grid_point.conf["batch_size"],
         in_memory=in_memory,
         spatial_projection=metadata.get("spatial_projection"),
+        ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
+        nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
     )
 
     trainer = grid_point.trainer
