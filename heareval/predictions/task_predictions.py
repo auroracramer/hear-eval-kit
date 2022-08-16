@@ -573,11 +573,6 @@ class ScenePredictionModel(AbstractPredictionModel):
     def _score_epoch_end(self, name: str, outputs: List[Dict[str, List[Any]]]):
         flat_outputs = self._flatten_batched_outputs(
             outputs, keys=["target", "prediction", "prediction_logit"],
-            stack_elements=(
-                ["target", "prediction", "prediction_logit"]
-                if self.prediction_type == "seld"
-                else None
-            ),
         )
         target, prediction, prediction_logit = (
             flat_outputs[key] for key in ["target", "prediction", "prediction_logit"]
@@ -649,6 +644,7 @@ class EventPredictionModel(AbstractPredictionModel):
         }
         # For each epoch, what postprocessing parameters were best
         self.epoch_best_postprocessing: Dict[int, Tuple[Tuple[str, Any], ...]] = {}
+        self.prediction_type = prediction_type
         self.postprocessing_grid = postprocessing_grid
         self.spatial_projection = spatial_projection
         self.nsublabels = nsublabels
@@ -672,11 +668,6 @@ class EventPredictionModel(AbstractPredictionModel):
             keys=keys,
             # This is a list of string, not tensor, so we don't need to stack it
             dont_stack=["filename"],
-            stack_elements=(
-                ["target", "prediction", "prediction_logit"]
-                if self.prediction_type == "seld"
-                else None
-            ),
         )
         target, prediction, prediction_logit, filename, timestamp = (
             flat_outputs[key]
