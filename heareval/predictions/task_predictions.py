@@ -981,7 +981,7 @@ def create_events_from_prediction(
             class_predictions = median_filter(class_predictions, size=cls_filter_shape),
 
             if prediction_type == "seld":
-                spa_filter_shape += (filter_width, 1, 1)
+                spa_filter_shape = (filter_width, 1, 1)
                 if multitrack:
                     spa_filter_shape += (1,)
                 spatial_predictions = median_filter(spatial_predictions, size=spa_filter_shape),
