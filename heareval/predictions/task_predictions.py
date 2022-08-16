@@ -21,7 +21,7 @@ import random
 import sys
 import time
 from collections import defaultdict
-from itertools import permutations, product
+from itertools import groupby, permutations, product
 from functools import reduce
 from operator import mul
 from pathlib import Path
@@ -35,6 +35,7 @@ import numpy.linalg as la
 import pandas as pd
 import pytorch_lightning as pl
 import torch
+import torch.nn.functional as F
 import torchinfo
 
 # import wandb
@@ -791,6 +792,7 @@ class SplitMemmapDataset(Dataset):
         spatial_projection: Optional[str] = None,
         ntracks: Optional[int] = None,
         nsublabels: Optional[int] = None,
+        include_seq_dim: bool = False,
     ):
         self.embedding_path = embedding_path
         self.label_to_idx = label_to_idx
@@ -801,6 +803,7 @@ class SplitMemmapDataset(Dataset):
         self.nspatial = spatial_projection_to_nspatial(spatial_projection)
         self.ntracks = ntracks
         self.nsublabels = nsublabels
+        self.include_seq_dim = include_seq_dim
 
         self.dim = tuple(
             json.load(
@@ -831,16 +834,49 @@ class SplitMemmapDataset(Dataset):
         # Only used for event-based prediction, for validation and test scoring,
         # For timestamp (event) embedding tasks,
         # the metadata for each instance is {filename: , timestamp: }.
+        self.file_idx_lists: Optional[List[List[int]]] = None
+        self.max_nseq: Optional[int] = None
         if self.embedding_type == "event" and metadata:
             filename_timestamps_json = embedding_path.joinpath(
                 f"{split_name}.filename-timestamps.json"
             )
+            with open(filename_timestamps_json, 'r') as f:
+                filename_timestamps_list = json.load(f)
+            if include_seq_dim:
+                self.metadata = []
+                self.file_idx_lists = []
+                for filename, group in groupby(enumerate(filename_timestamps_list), key=lambda idx, x: x[0]):
+                    file_metadata = {
+                        "filename": filename,
+                        "timestamp_list": [],
+                    }
+                    idx_list = []
+                    for idx, (_, timestamp) in sorted(tuple(group), key=lambda idx, x: x[1]):
+                        file_metadata["timestamp_list"].append(timestamp)
+                        idx_list.append(idx)
+
+                    # Sort in temporal order
+                    time_order_idxs = np.argsort(file_metadata["timestamp_list"])
+                    file_metadata["timestamp_list"] = [
+                        file_metadata["timestamp_list"][lidx]
+                        for lidx in time_order_idxs
+                    ]
+                    idx_list = [idx_list[lidx] for lidx in time_order_idxs]
+                    
+                    # Get max sequence length for padding purposes
+                    self.max_nseq = max(self.max_nseq, len(idx_list))
+
+                    self.file_idx_lists.append(idx_list)
+                    self.metadata.append(file_metadata)
+
+            else:
             self.metadata = [
                 {"filename": filename, "timestamp": timestamp}
-                for filename, timestamp in json.load(open(filename_timestamps_json))
+                    for filename, timestamp in filename_timestamps_list
             ]
         else:
             self.metadata = [{}] * self.dim[0]
+
         assert len(self.labels) == self.dim[0]
         assert len(self.labels) == len(self.embeddings)
         assert len(self.labels) == len(self.metadata)
@@ -849,7 +885,6 @@ class SplitMemmapDataset(Dataset):
             assert len(self.spatial) == self.dim[0]
             assert len(self.spatial) == len(self.embeddings)
             assert len(self.spatial) == len(self.metadata)
-
 
         """
         For all labels, return a multi or one-hot vector.
@@ -899,11 +934,28 @@ class SplitMemmapDataset(Dataset):
         else:
             assert self.y.shape == (len(self.labels), self.nlabels)
 
-
     def __len__(self) -> int:
+        if self.include_seq_dim:
+            return len(self.file_idx_lists)
+        else:
         return self.dim[0]
 
     def __getitem__(self, idx) -> Tuple[torch.Tensor, Union[torch.Tensor, Sequence[torch.Tensor]], Dict[str, Any]]:
+        if self.include_seq_dim:
+            idx_list = self.file_idx_lists[idx]
+            emb_ndimm1 = len(self.embeddings.shape[1:])
+            lbl_ndimm1 = len(self.y.shape[1:])
+
+            embeddings = self.embeddings[idx_list, ...]
+            y = self.y[idx_list, ...]
+
+            nseq = len(idx_list)
+            npad = self.max_nseq - nseq
+            if npad:
+                embeddings = F.pad(embeddings, (0, 0) * emb_ndimm1 + (0, npad))
+                y = F.pad(y, (0, 0) * lbl_ndimm1 + (0, npad))
+            return embeddings, y, nseq, self.metadata[idx]
+        else:
         return self.embeddings[idx], self.y[idx], self.metadata[idx]
 
 
