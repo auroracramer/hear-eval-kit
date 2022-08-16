@@ -1118,11 +1118,6 @@ def get_events_for_all_files(
     """
     # This probably could be more efficient if we make the assumption that
     # timestamps are in sorted order. But this makes sure of it.
-    if prediction_type == "seld":
-        assert all(v.shape[0] == len(filenames) for v in predictions)
-        assert all(v.shape[0] == len(timestamps) for v in predictions)
-
-    else:
         assert predictions.shape[0] == len(filenames)
         assert predictions.shape[0] == len(timestamps)
     event_files: Dict[str, Dict[float, Union[torch.Tensor, List[torch.Tensor]]]] = {}
