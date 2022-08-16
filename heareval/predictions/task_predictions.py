@@ -31,6 +31,7 @@ from typing import (
 
 import more_itertools
 import numpy as np
+import numpy.linalg as la
 import pandas as pd
 import pytorch_lightning as pl
 import torch
@@ -951,7 +952,7 @@ def create_events_from_prediction(
                 for t in timestamps
             ]
         )
-        class_predictions = np.clip(spatial_predictions.norm(dim=-1), 0, 1)
+        class_predictions = np.clip(la.norm(spatial_predictions, axis=-1), 0, 1)
     elif prediction_type == "avoseld_multiregion":
         spatial_predictions = np.stack(
             [
