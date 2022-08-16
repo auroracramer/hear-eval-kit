@@ -793,6 +793,7 @@ class SplitMemmapDataset(Dataset):
         ntracks: Optional[int] = None,
         nsublabels: Optional[int] = None,
         include_seq_dim: bool = False,
+        nseqchunk: Optional[int] = None,
     ):
         self.embedding_path = embedding_path
         self.label_to_idx = label_to_idx
@@ -834,7 +835,7 @@ class SplitMemmapDataset(Dataset):
         # Only used for event-based prediction, for validation and test scoring,
         # For timestamp (event) embedding tasks,
         # the metadata for each instance is {filename: , timestamp: }.
-        self.file_idx_lists: Optional[List[List[int]]] = None
+        self.ex_idx_lists: Optional[List[List[int]]] = None
         self.max_nseq: Optional[int] = None
         if self.embedding_type == "event" and metadata:
             filename_timestamps_json = embedding_path.joinpath(
@@ -844,8 +845,11 @@ class SplitMemmapDataset(Dataset):
                 filename_timestamps_list = json.load(f)
             if include_seq_dim:
                 self.metadata = []
-                self.file_idx_lists = []
-                for filename, group in groupby(enumerate(filename_timestamps_list), key=lambda idx, x: x[0]):
+                self.ex_idx_lists = []
+                for filename, group in groupby(
+                    enumerate(filename_timestamps_list),
+                    key=lambda idx, x: x[0]
+                ):
                     file_metadata = {
                         "filename": filename,
                         "timestamp_list": [],
@@ -863,17 +867,37 @@ class SplitMemmapDataset(Dataset):
                     ]
                     idx_list = [idx_list[lidx] for lidx in time_order_idxs]
                     
-                    # Get max sequence length for padding purposes
-                    self.max_nseq = max(self.max_nseq, len(idx_list))
+                    if nseqchunk:
+                        # Split into chunks
+                        for chunk, chunk_idxs in enumerate(
+                            more_itertools.chunked(range(len(idx_list)))
+                        ):
+                            ex_idx_list = [idx_list[lidx] for lidx in chunk_idxs]
+                            ex_metadata = {
+                                "filename": filename,
+                                "timestamp_list": [
+                                    file_metadata["timestamp_list"][lidx]
+                                    for lidx in chunk_idxs
+                                ],
+                                "chunk_idx": chunk,
+                            }
+                            self.ex_idx_lists.append(ex_idx_list)
+                            self.metadata.append(ex_metadata)
+                    else:
+                        # Get max sequence length for padding purposes
+                        self.max_nseq = max(self.max_nseq, len(idx_list))
 
-                    self.file_idx_lists.append(idx_list)
-                    self.metadata.append(file_metadata)
+                        self.ex_idx_lists.append(idx_list)
+                        self.metadata.append(file_metadata)
+
+                if nseqchunk:
+                    self.max_nseq = nseqchunk
 
             else:
-            self.metadata = [
-                {"filename": filename, "timestamp": timestamp}
-                    for filename, timestamp in filename_timestamps_list
-            ]
+                self.metadata = [
+                    {"filename": filename, "timestamp": timestamp}
+                        for filename, timestamp in filename_timestamps_list
+                ]
         else:
             self.metadata = [{}] * self.dim[0]
 
@@ -936,9 +960,9 @@ class SplitMemmapDataset(Dataset):
 
     def __len__(self) -> int:
         if self.include_seq_dim:
-            return len(self.file_idx_lists)
+            return len(self.ex_idx_lists)
         else:
-        return self.dim[0]
+            return self.dim[0]
 
     def __getitem__(self, idx) -> Tuple[torch.Tensor, Union[torch.Tensor, Sequence[torch.Tensor]], Dict[str, Any]]:
         if self.include_seq_dim:
@@ -956,7 +980,7 @@ class SplitMemmapDataset(Dataset):
                 y = F.pad(y, (0, 0) * lbl_ndimm1 + (0, npad))
             return embeddings, y, nseq, self.metadata[idx]
         else:
-        return self.embeddings[idx], self.y[idx], self.metadata[idx]
+            return self.embeddings[idx], self.y[idx], self.metadata[idx]
 
 
 def create_events_from_prediction(
