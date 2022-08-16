@@ -1220,7 +1220,9 @@ def get_events_for_all_files(
         for slug, timestamp_predictions in event_files.items():
             event_dict[postprocess][slug] = create_events_from_prediction(
                 timestamp_predictions, idx_to_label, prediction_type,
-                spatial_projection=spatial_projection, **dict(postprocess)
+                spatial_projection=spatial_projection,
+                multitrack=multitrack,
+                **dict(postprocess)
             )
     else:
         postprocessing_confs = list(ParameterGrid(postprocessing_grid))
@@ -1230,7 +1232,8 @@ def get_events_for_all_files(
             for slug, timestamp_predictions in event_files.items():
                 event_dict[postprocess][slug] = create_events_from_prediction(
                     timestamp_predictions, idx_to_label, prediction_type,
-                    spatial_projection=spatial_projection, multitrack=multitrack,
+                    spatial_projection=spatial_projection,
+                    multitrack=multitrack,
                     **postprocess_dict
                 )
 
