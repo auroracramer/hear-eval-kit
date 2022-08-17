@@ -985,7 +985,7 @@ class SplitMemmapDataset(Dataset):
                 self.ex_idx_lists = []
                 for filename, group in groupby(
                     enumerate(filename_timestamps_list),
-                    key=lambda idx, x: x[0]
+                    key=lambda x: x[1][0]
                 ):
                     file_metadata = {
                         "filename": filename,
@@ -993,7 +993,7 @@ class SplitMemmapDataset(Dataset):
                         "chunk_idx": 0,
                     }
                     idx_list = []
-                    for idx, (_, timestamp) in sorted(tuple(group), key=lambda idx, x: x[1]):
+                    for idx, (_, timestamp) in sorted(tuple(group), key=lambda x: x[1][1]):
                         file_metadata["timestamp_list"].append(timestamp)
                         idx_list.append(idx)
 
