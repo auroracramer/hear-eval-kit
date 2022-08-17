@@ -124,6 +124,10 @@ FASTER_PARAM_GRID.update(
     }
 )
 
+SEQ_PARAM_SUBGRID = {
+    "sequence_chunk_length": [None],
+}
+
 # These are good for dcase, change for other event-based secret tasks
 EVENT_POSTPROCESSING_GRID = {
     "median_filter_ms": [250],
@@ -302,6 +306,7 @@ class FullyConnectedPrediction(torch.nn.Module):
         nspatial: int,
         ntracks: Optional[int],
         nsublabels: Optional[int],
+        include_seq_dim: bool = False,
     ):
         super().__init__()
 
@@ -376,7 +381,11 @@ class FullyConnectedPrediction(torch.nn.Module):
             self.loss = torch.nn.OneHotToCrossEntropyLoss()
         elif prediction_type == "seld":
             if self.multitrack:
-                self.loss = ADPIT(nlabels=nlabels, ntracks=ntracks)
+                self.loss = ADPIT(
+                    nlabels=nlabels,
+                    ntracks=ntracks,
+                    frame_dim=(1 if include_seq_dim else None),
+                )
             else:
                 self.loss = torch.nn.MSELOSS()
             self.activation = torch.nn.Tanh()
@@ -413,6 +422,7 @@ class AbstractPredictionModel(pl.LightningModule):
         nspatial: Optional[int] = None,
         nsublabels: Optional[int] = None,
         ntracks: Optional[int] = None,
+        include_seq_dim: bool = False,
     ):
         super().__init__()
 
@@ -424,6 +434,7 @@ class AbstractPredictionModel(pl.LightningModule):
         self.predictor = FullyConnectedPrediction(
             nfeatures, nlabels, prediction_type, conf,
             nspatial=nspatial, ntracks=ntracks, nsublabels=nsublabels,
+            include_seq_dim=include_seq_dim,
         )
         torchinfo.summary(self.predictor, input_size=(64, nfeatures))
         self.label_to_idx = label_to_idx
@@ -627,6 +638,7 @@ class EventPredictionModel(AbstractPredictionModel):
         spatial_projection: Optional[str] = None,
         nsublabels: Optional[int] = None,
         ntracks: Optional[int] = None,
+        include_seq_dim: bool = False,
     ):
         super().__init__(
             nfeatures=nfeatures,
@@ -639,6 +651,7 @@ class EventPredictionModel(AbstractPredictionModel):
             nspatial=spatial_projection_to_nspatial(spatial_projection),
             nsublabels=nsublabels,
             ntracks=ntracks,
+            include_seq_dim=include_seq_dim,
         )
         self.target_events = {
             "val": validation_target_events,
@@ -651,6 +664,7 @@ class EventPredictionModel(AbstractPredictionModel):
         self.spatial_projection = spatial_projection
         self.nsublabels = nsublabels
         self.ntracks = ntracks
+        self.include_seq_dim = include_seq_dim
 
     def epoch_best_postprocessing_or_default(
         self, epoch: int
@@ -664,27 +678,72 @@ class EventPredictionModel(AbstractPredictionModel):
             return tuple(postprocessing_confs[0].items())
 
     def _score_epoch_end(self, name: str, outputs: List[Dict[str, List[Any]]]):
-        keys = ["target", "prediction", "prediction_logit", "filename", "timestamp"]
-        flat_outputs = self._flatten_batched_outputs(
-            outputs,
-            keys=keys,
-            # This is a list of string, not tensor, so we don't need to stack it
-            dont_stack=["filename"],
-        )
-        target, prediction, prediction_logit, filename, timestamp = (
-            flat_outputs[key]
-            for key in [
-                "target",
-                "prediction",
-                "prediction_logit",
-                "filename",
-                "timestamp",
+        if self.include_seq_dim:
+            keys = [
+                "target", "prediction", "prediction_logit", "filename",
+                "timestamp_list", "chunk_idx"
             ]
-        )
+            flat_outputs = self._flatten_batched_outputs(
+                outputs, keys=keys,
+                # This is a list of string, not tensor, so we don't need to stack it
+                dont_stack=["filename", "timestamp_list", "chunk_idx",],
+            )
+            raw_target, _prediction, raw_prediction_logit, _filename, _timestamp_lists, _chunk_idx = (
+                flat_outputs[key]
+                for key in keys
+            )
+
+            assert raw_target.shape[1] == _prediction.shape[1]
+
+            filename = []
+            timestamp = []
+            ex_idx_list = []
+            seq_idx_list = []
+
+            # Group by filename
+            for fname, group in groupby(
+                enumerate(zip(_filename, _timestamp_lists, _chunk_idx)),
+                key=lambda x: x[1][0],
+            ):
+                file_ex_idx_list, items = zip(*group)
+                _, file_timestamp_lists, file_chunk_idx_list = zip(*items)
+                # Sort by chunk indices
+                lidx_order = np.argsort(file_chunk_idx_list)
+                
+                for lidx in lidx_order:
+                    chunk_timestamps = file_timestamp_lists[lidx].detach().cpu().tolist()
+                    chunk_ex_idx = file_ex_idx_list[lidx]
+                    for chunk_seq_idx, ts in enumerate(chunk_timestamps):
+                        # Flatten out filenames, timestamps for each example
+                        # and each sequence, which ignores padding
+                        filename.append(fname)
+                        timestamp.append(ts)
+                        ex_idx_list.append(chunk_ex_idx)
+                        seq_idx_list.append(chunk_seq_idx)
+
+            timestamp = torch.stack(timestamp)
+            target = raw_target[ex_idx_list, seq_idx_list, ...]
+            prediction = _prediction[ex_idx_list, seq_idx_list, ...]
+            prediction_logit = raw_prediction_logit[ex_idx_list, seq_idx_list, ...]
+
+            del _prediction, _filename, _timestamp_lists, _chunk_idx
+        else:
+            keys = ["target", "prediction", "prediction_logit", "filename", "timestamp"]
+            flat_outputs = self._flatten_batched_outputs(
+                outputs, key=keys,
+                # This is a list of string, not tensor, so we don't need to stack it
+                dont_stack=["filename"],
+            )
+            target, prediction, prediction_logit, filename, timestamp = (
+                flat_outputs[key]
+                for key in keys
+            )
+            raw_target = target
+            raw_prediction_logit = prediction_logit
 
         self.log(
             f"{name}_loss",
-            self.predictor.loss(prediction_logit, target),
+            self.predictor.loss(raw_prediction_logit, raw_target),
             prog_bar=True,
             logger=True,
         )
@@ -699,10 +758,11 @@ class EventPredictionModel(AbstractPredictionModel):
         # print("\n\n\n", epoch)
 
         if name == "test" or self.use_scoring_for_early_stopping:
-            file_timestamps = {
-                Path(fname).name: ts
-                for fname, ts in zip(filename, timestamp)
-            }
+            file_timestamps = {}
+            timestamp = timestamp.detach().cpu().numpy()
+            for fname, group in groupby(zip(filename, timestamp), key=lambda x: x[0]):
+                slug = Path(fname).name
+                file_timestamps[slug] = sorted([ts for _, ts in group])
 
             predicted_events_by_postprocessing = get_events_for_all_files(
                 prediction,
@@ -861,6 +921,7 @@ class SplitMemmapDataset(Dataset):
                     file_metadata = {
                         "filename": filename,
                         "timestamp_list": [],
+                        "chunk_idx": 0,
                     }
                     idx_list = []
                     for idx, (_, timestamp) in sorted(tuple(group), key=lambda idx, x: x[1]):
@@ -874,11 +935,12 @@ class SplitMemmapDataset(Dataset):
                         for lidx in time_order_idxs
                     ]
                     idx_list = [idx_list[lidx] for lidx in time_order_idxs]
+                    nseq = len(idx_list)
                     
                     if nseqchunk:
                         # Split into chunks
                         for chunk, chunk_idxs in enumerate(
-                            more_itertools.chunked(range(len(idx_list)))
+                            more_itertools.chunked(range(nseq))
                         ):
                             ex_idx_list = [idx_list[lidx] for lidx in chunk_idxs]
                             ex_metadata = {
@@ -974,7 +1036,7 @@ class SplitMemmapDataset(Dataset):
 
     def __getitem__(self, idx) -> Tuple[torch.Tensor, Union[torch.Tensor, Sequence[torch.Tensor]], Dict[str, Any]]:
         if self.include_seq_dim:
-            idx_list = self.file_idx_lists[idx]
+            idx_list = self.ex_idx_lists[idx]
             emb_ndimm1 = len(self.embeddings.shape[1:])
             lbl_ndimm1 = len(self.y.shape[1:])
 
@@ -1271,6 +1333,8 @@ def dataloader_from_split_name(
     spatial_projection: Optional[str] = None,
     ntracks: Optional[int] = None,
     nsublabels: Optional[int] = None,
+    include_seq_dim: bool = False,
+    nseqchunk: Optional[int] = None,
 ) -> DataLoader:
     """
     Get the dataloader for a `split_name` or a list of `split_name`
@@ -1303,6 +1367,8 @@ def dataloader_from_split_name(
                     spatial_projection=spatial_projection,
                     ntracks=ntracks,
                     nsublabels=nsublabels,
+                    include_seq_dim=include_seq_dim,
+                    nseqchunk=nseqchunk,
                 )
                 for name in split_name
             ]
@@ -1320,6 +1386,8 @@ def dataloader_from_split_name(
             spatial_projection=spatial_projection,
             ntracks=ntracks,
             nsublabels=nsublabels,
+            include_seq_dim=include_seq_dim,
+            nseqchunk=nseqchunk,
         )
     else:
         raise ValueError("split_name should be a list or string")
@@ -1468,6 +1536,7 @@ def task_predictions_train(
             spatial_projection=metadata.get("spatial_projection"),
             ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
             nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
+            include_seq_dim=bool(metadata.get("process_sequence")),
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
         )
     elif metadata["embedding_type"] == "scene":
@@ -1534,6 +1603,8 @@ def task_predictions_train(
         spatial_projection=metadata.get("spatial_projection"),
         ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
         nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
+        include_seq_dim=bool(metadata.get("process_sequence")),
+        nseqchunk=conf.get("sequence_chunk_length"),
     )
     valid_dataloader = dataloader_from_split_name(
         data_splits["valid"],
@@ -1547,6 +1618,8 @@ def task_predictions_train(
         spatial_projection=metadata.get("spatial_projection"),
         ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
         nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
+        include_seq_dim=bool(metadata.get("process_sequence")),
+        nseqchunk=conf.get("sequence_chunk_length"),
     )
     trainer.fit(predictor, train_dataloader, valid_dataloader)
     if checkpoint_callback.best_model_score is not None:
@@ -1604,6 +1677,8 @@ def task_predictions_test(
         spatial_projection=metadata.get("spatial_projection"),
         ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
         nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
+        include_seq_dim=bool(metadata.get("process_sequence")),
+        nseqchunk=grid_point.conf.get("sequence_chunk_length"),
     )
 
     trainer = grid_point.trainer
@@ -1832,6 +1907,9 @@ def task_predictions(
         raise ValueError(
             f"Unknown grid type: {grid}. Please select default, fast, or faster"
         )
+
+    if bool(metadata.get("process_sequence")):
+        final_grid.update(SEQ_PARAM_SUBGRID)
 
     # Update with task specific grid parameters
     # From the global TASK_SPECIFIC_PARAM_GRID
