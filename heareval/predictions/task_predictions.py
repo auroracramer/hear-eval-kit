@@ -67,7 +67,9 @@ TASK_SPECIFIC_PARAM_GRID = {
 }
 
 PRED_TYPE_SPECIFIC_PARAM_GRID = {
-    "process_sequence": [True, False],
+    "seld": {
+        "process_sequence": [True, False],
+    },
 }
 
 SEQ_PARAM_SUBGRID = {
