@@ -1025,7 +1025,10 @@ class SplitMemmapDataset(Dataset):
                                 self.metadata.append(ex_metadata)
                     else:
                         # Get max sequence length for padding purposes
-                        self.max_nseq = max(self.max_nseq, len(idx_list))
+                        self.max_nseq = (
+                            max(self.max_nseq, nseq)
+                            if self.max_nseq else nseq
+                        )
                         self.ex_idx_lists.append(idx_list)
 
                         if metadata:
