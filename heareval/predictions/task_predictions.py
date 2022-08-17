@@ -183,19 +183,32 @@ class BranchConcatModule(torch.nn.Module):
         return torch.cat(x_seq, dim=self.concat_dim)
 
 
+def get_mask_from_nseq(X: torch.tensor, nseq: torch.Tensor):
+    nbatch, nframes, = X.shape[:2]
+    assert nseq.ndim == 1
+    assert nseq.shape[0] == nbatch
+    # Create mask from nseq
+    # https://stackoverflow.com/a/53403392
+    mask = torch.arange(nframes).expand(nbatch, nframes) < nseq.unsqueeze(1)
+    # Add singleton dimensions to expand to loss shape
+    # https://github.com/pytorch/pytorch/issues/9410#issuecomment-552786888
+    mask = mask[(...,) + (None,) * (X.ndim - mask.ndim)] 
+    return mask
+
+
 class ADPIT(torch.nn.Module):
     def __init__(
         self,
         nlabels: int,
         ntracks: int,
-        frame_dim: Optional[int] = None,
+        process_sequence: bool = False,
         mask_prediction: bool = False,
         base_loss: Optional[torch.nn.Module] = None
     ) -> None:
         super().__init__()
         self.nlabels = nlabels
         self.ntracks = ntracks
-        self.frame_dim = frame_dim
+        self.process_sequence = process_sequence
         self.mask_prediction = mask_prediction
         base_loss = base_loss or torch.nn.MSELoss(reduction="none")
         assert (getattr(base_loss, "reduction", None) == "none"), (
@@ -203,19 +216,23 @@ class ADPIT(torch.nn.Module):
         )
         self.base_loss = base_loss
 
-    def compute_base_loss(self, x: torch.Tensor, y: torch.Tensor):
+    def compute_base_loss(self, x: torch.Tensor, y: torch.Tensor, mask: Optional[torch.Tensor] = None):
         loss = self.base_loss(x, y)
-        if self.frame_dim is not None:
-            return loss.mean(dim=self.frame_dim)
+        if self.process_sequence:
+            if mask is not None:
+                # Mask loss to ignore padding frames
+                return (loss * mask).sum(dim=1) / mask.sum(dim=1)
+            else:
+                return loss.mean(dim=1)
         else:
             return loss
 
-    def forward(self, pred: torch.Tensor, target: torch.Tensor):
+    def forward(self, pred: torch.Tensor, target: torch.Tensor, nseq: Optional[torch.Tensor] = None) -> torch.Tensor:
         # pred:   (nbatch, nframes, nlabels, ntracks, nspatial)
         # target: (nbatch, nframes, nlabels, ntracks_adpit, nspatial + 1)
 
         # SANITY CHECK
-        if self.frame_dim is not None:
+        if self.process_sequence:
             nbatch_1, nframes_1, nlabels_1, ntracks_1, nspatial_1 = pred.shape
             nbatch_2, nframes_2, nlabels_2, ntracks_adapit_2, nspatialp1_2 = target.shape
             assert nframes_1 == nframes_2
@@ -227,6 +244,12 @@ class ADPIT(torch.nn.Module):
         assert nlabels_1 == nlabels_2
         assert ((ntracks_1 * (ntracks_1 + 1)) // 2) == ntracks_adapit_2
         assert (nspatial_1 + 1) == nspatialp1_2
+
+        if nseq is not None:
+            assert self.process_sequence
+            mask = get_mask_from_nseq(pred, nseq)
+        else:
+            mask = None
 
         if self.mask_prediction:
             act = (pred.norm(dim=-1, keepdim=True) > 0.5)
@@ -281,7 +304,7 @@ class ADPIT(torch.nn.Module):
             # Compute loss for each permutation target
             for perm_target in curr_perm_targets:
                 assert perm_target.shape == pred.shape
-                loss = self.compute_base_loss(pred, perm_target + padding)
+                loss = self.compute_base_loss(pred, perm_target + padding, mask=mask)
                 losses.append(loss)
 
         # Get indices of minimum loss for each batch/class
@@ -319,6 +342,7 @@ class FullyConnectedPrediction(torch.nn.Module):
         self.multitrack = bool(ntracks)
         self.ntracks = ntracks # for multitrack
         self.nsublabels = nsublabels # for avoseld_multiregion
+        self.process_sequence = bool(conf.get("process_sequence"))
         hidden_modules: List[torch.nn.Module] = []
         curdim = nfeatures
         # Honestly, we don't really know what activation preceded
@@ -389,7 +413,7 @@ class FullyConnectedPrediction(torch.nn.Module):
                 self.loss = ADPIT(
                     nlabels=nlabels,
                     ntracks=ntracks,
-                    frame_dim=(1 if conf["process_sequence"] else None),
+                    process_sequence=self.process_sequence,
                 )
             else:
                 self.loss = torch.nn.MSELOSS()
@@ -412,6 +436,18 @@ class FullyConnectedPrediction(torch.nn.Module):
         x = self.forward_loss_compatible(x)
         x = self.activation(x)
         return x
+
+    def compute_loss(self, pred: torch.Tensor, target: torch.Tensor, nseq: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if self.process_sequence and nseq is not None:
+            if isinstance(self.loss, ADPIT):
+                return self.loss(pred, target, nseq=nseq)
+            else:
+                raise ValueError(
+                    f"Loss masking by nseq is not supported for loss"
+                    f" '{type(self.loss).__name__}'"
+                )
+        else:
+            return self.loss(pred, target)
 
 
 class AbstractPredictionModel(pl.LightningModule):
@@ -666,6 +702,37 @@ class EventPredictionModel(AbstractPredictionModel):
         self.nsublabels = nsublabels
         self.ntracks = ntracks
         self.include_seq_dim = bool(conf.get("process_sequence"))
+
+    def training_step(self, batch, batch_idx):
+        # training_step defined the train loop.
+        # It is independent of forward
+        if self.include_seq_dim:
+            x, y, nseq, _ = batch
+        else:
+            x, y, _ = batch
+            nseq = None
+        y_hat = self.predictor.forward_loss_compatible(x)
+        loss = self.predictor.compute_loss(y_hat, y, nseq=nseq)
+        # Logging to TensorBoard by default
+        self.log("train_loss", loss)
+        return loss
+
+    def _step(self, batch, batch_idx):
+        # -> Dict[str, Union[torch.Tensor, List(str)]]:
+        if self.include_seq_dim:
+            x, y, _, metadata = batch
+
+        else:
+            x, y, metadata = batch
+        y_hat = self.predictor.forward_loss_compatible(x)
+        y_pr = self.predictor(x)
+        z = {
+            "prediction": y_pr,
+            "prediction_logit": y_hat,
+            "target": y,
+        }
+        # https://stackoverflow.com/questions/38987/how-do-i-merge-two-dictionaries-in-a-single-expression-taking-union-of-dictiona
+        return {**z, **metadata}
 
     def epoch_best_postprocessing_or_default(
         self, epoch: int
