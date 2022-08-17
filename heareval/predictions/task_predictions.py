@@ -1049,12 +1049,10 @@ class SplitMemmapDataset(Dataset):
 
         assert len(self.labels) == self.dim[0]
         assert len(self.labels) == len(self.embeddings)
-        assert len(self.labels) == len(self.metadata)
         assert self.embeddings[0].shape[0] == self.dim[1]
         if self.prediction_type == "seld":
             assert len(self.spatial) == self.dim[0]
             assert len(self.spatial) == len(self.embeddings)
-            assert len(self.spatial) == len(self.metadata)
 
         """
         For all labels, return a multi or one-hot vector.
