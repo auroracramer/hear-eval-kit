@@ -906,14 +906,15 @@ class SplitMemmapDataset(Dataset):
         # the metadata for each instance is {filename: , timestamp: }.
         self.ex_idx_lists: Optional[List[List[int]]] = None
         self.max_nseq: Optional[int] = None
-        if self.embedding_type == "event" and metadata:
+        if self.embedding_type == "event":
             filename_timestamps_json = embedding_path.joinpath(
                 f"{split_name}.filename-timestamps.json"
             )
             with open(filename_timestamps_json, 'r') as f:
                 filename_timestamps_list = json.load(f)
-            if include_seq_dim:
-                self.metadata = []
+            if self.include_seq_dim:
+                if metadata:
+                    self.metadata = []
                 self.ex_idx_lists = []
                 for filename, group in groupby(
                     enumerate(filename_timestamps_list),
@@ -944,32 +945,36 @@ class SplitMemmapDataset(Dataset):
                             more_itertools.chunked(range(nseq))
                         ):
                             ex_idx_list = [idx_list[lidx] for lidx in chunk_idxs]
-                            ex_metadata = {
-                                "filename": filename,
-                                "timestamp_list": [
-                                    file_metadata["timestamp_list"][lidx]
-                                    for lidx in chunk_idxs
-                                ],
-                                "chunk_idx": chunk,
-                            }
                             self.ex_idx_lists.append(ex_idx_list)
-                            self.metadata.append(ex_metadata)
+                            if metadata:
+                                ex_metadata = {
+                                    "filename": filename,
+                                    "timestamp_list": [
+                                        file_metadata["timestamp_list"][lidx]
+                                        for lidx in chunk_idxs
+                                    ],
+                                    "chunk_idx": chunk,
+                                }
+                                self.metadata.append(ex_metadata)
                     else:
                         # Get max sequence length for padding purposes
                         self.max_nseq = max(self.max_nseq, len(idx_list))
-
                         self.ex_idx_lists.append(idx_list)
-                        self.metadata.append(file_metadata)
+
+                        if metadata:
+                            self.metadata.append(file_metadata)
 
                 if nseqchunk:
                     self.max_nseq = nseqchunk
 
             else:
-                self.metadata = [
-                    {"filename": filename, "timestamp": timestamp}
-                        for filename, timestamp in filename_timestamps_list
-                ]
-        else:
+                if metadata:
+                    self.metadata = [
+                        {"filename": filename, "timestamp": timestamp}
+                            for filename, timestamp in filename_timestamps_list
+                    ]
+
+        if not metadata:
             self.metadata = [{}] * self.dim[0]
 
         assert len(self.labels) == self.dim[0]
