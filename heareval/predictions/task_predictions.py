@@ -66,6 +66,14 @@ TASK_SPECIFIC_PARAM_GRID = {
     },
 }
 
+PRED_TYPE_SPECIFIC_PARAM_GRID = {
+    "process_sequence": [True, False],
+}
+
+SEQ_PARAM_SUBGRID = {
+    "sequence_chunk_length": [None],
+}
+
 PARAM_GRID = {
     "hidden_layers": [1, 2],
     # "hidden_layers": [0, 1, 2],
@@ -123,10 +131,6 @@ FASTER_PARAM_GRID.update(
         "check_val_every_n_epoch": [1],
     }
 )
-
-SEQ_PARAM_SUBGRID = {
-    "sequence_chunk_length": [None],
-}
 
 # These are good for dcase, change for other event-based secret tasks
 EVENT_POSTPROCESSING_GRID = {
@@ -306,7 +310,6 @@ class FullyConnectedPrediction(torch.nn.Module):
         nspatial: int,
         ntracks: Optional[int],
         nsublabels: Optional[int],
-        include_seq_dim: bool = False,
     ):
         super().__init__()
 
@@ -384,7 +387,7 @@ class FullyConnectedPrediction(torch.nn.Module):
                 self.loss = ADPIT(
                     nlabels=nlabels,
                     ntracks=ntracks,
-                    frame_dim=(1 if include_seq_dim else None),
+                    frame_dim=(1 if conf["process_sequence"] else None),
                 )
             else:
                 self.loss = torch.nn.MSELOSS()
@@ -422,7 +425,6 @@ class AbstractPredictionModel(pl.LightningModule):
         nspatial: Optional[int] = None,
         nsublabels: Optional[int] = None,
         ntracks: Optional[int] = None,
-        include_seq_dim: bool = False,
     ):
         super().__init__()
 
@@ -434,7 +436,6 @@ class AbstractPredictionModel(pl.LightningModule):
         self.predictor = FullyConnectedPrediction(
             nfeatures, nlabels, prediction_type, conf,
             nspatial=nspatial, ntracks=ntracks, nsublabels=nsublabels,
-            include_seq_dim=include_seq_dim,
         )
         torchinfo.summary(self.predictor, input_size=(64, nfeatures))
         self.label_to_idx = label_to_idx
@@ -638,7 +639,6 @@ class EventPredictionModel(AbstractPredictionModel):
         spatial_projection: Optional[str] = None,
         nsublabels: Optional[int] = None,
         ntracks: Optional[int] = None,
-        include_seq_dim: bool = False,
     ):
         super().__init__(
             nfeatures=nfeatures,
@@ -651,7 +651,6 @@ class EventPredictionModel(AbstractPredictionModel):
             nspatial=spatial_projection_to_nspatial(spatial_projection),
             nsublabels=nsublabels,
             ntracks=ntracks,
-            include_seq_dim=include_seq_dim,
         )
         self.target_events = {
             "val": validation_target_events,
@@ -664,7 +663,7 @@ class EventPredictionModel(AbstractPredictionModel):
         self.spatial_projection = spatial_projection
         self.nsublabels = nsublabels
         self.ntracks = ntracks
-        self.include_seq_dim = include_seq_dim
+        self.include_seq_dim = bool(conf.get("process_sequence"))
 
     def epoch_best_postprocessing_or_default(
         self, epoch: int
@@ -1536,7 +1535,6 @@ def task_predictions_train(
             spatial_projection=metadata.get("spatial_projection"),
             ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
             nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
-            include_seq_dim=bool(metadata.get("process_sequence")),
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
         )
     elif metadata["embedding_type"] == "scene":
@@ -1603,7 +1601,7 @@ def task_predictions_train(
         spatial_projection=metadata.get("spatial_projection"),
         ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
         nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
-        include_seq_dim=bool(metadata.get("process_sequence")),
+        include_seq_dim=bool(conf.get("process_sequence")),
         nseqchunk=conf.get("sequence_chunk_length"),
     )
     valid_dataloader = dataloader_from_split_name(
@@ -1618,7 +1616,7 @@ def task_predictions_train(
         spatial_projection=metadata.get("spatial_projection"),
         ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
         nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
-        include_seq_dim=bool(metadata.get("process_sequence")),
+        include_seq_dim=bool(conf.get("process_sequence")),
         nseqchunk=conf.get("sequence_chunk_length"),
     )
     trainer.fit(predictor, train_dataloader, valid_dataloader)
@@ -1677,7 +1675,7 @@ def task_predictions_test(
         spatial_projection=metadata.get("spatial_projection"),
         ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
         nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
-        include_seq_dim=bool(metadata.get("process_sequence")),
+        include_seq_dim=bool(grid_point.conf.get("process_sequence")),
         nseqchunk=grid_point.conf.get("sequence_chunk_length"),
     )
 
@@ -1908,13 +1906,16 @@ def task_predictions(
             f"Unknown grid type: {grid}. Please select default, fast, or faster"
         )
 
-    if bool(metadata.get("process_sequence")):
-        final_grid.update(SEQ_PARAM_SUBGRID)
-
     # Update with task specific grid parameters
     # From the global TASK_SPECIFIC_PARAM_GRID
     if metadata["task_name"] in TASK_SPECIFIC_PARAM_GRID:
         final_grid.update(TASK_SPECIFIC_PARAM_GRID[metadata["task_name"]])
+
+    if metadata["prediction_type"] in PRED_TYPE_SPECIFIC_PARAM_GRID:
+        final_grid.update(PRED_TYPE_SPECIFIC_PARAM_GRID[metadata["prediction_type"]])
+
+        if bool(metadata.get("process_sequence")):
+            final_grid.update(SEQ_PARAM_SUBGRID)
 
     # From task specific parameter grid in the task metadata
     # We add this option, so that task specific param grid can be used
