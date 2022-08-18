@@ -532,8 +532,8 @@ class HorizontalRegionIoUScore(ScoreFunction):
         ])
 
         overall_scores: Dict[str, float] = dict(
-            iou_micro=iou_micro,
-            iou_macro=iou_macro,
+            iou_micro=float(iou_micro),
+            iou_macro=float(iou_macro),
         )
         # Return the required scores as tuples. The scores are returned in the
         # order they are passed in the `scores` argument
@@ -608,16 +608,16 @@ class SELDScore(ScoreFunction):
         # ER (seld_er), F (seld_f), LE (seld_le), LR (seld_lr), SELD_scr (seld_score), classwise_results
 
         overall_scores: Dict[str, float] = dict(
-            error_rate=er_micro,
-            f_measure=f_micro,
-            localization_error=le_micro,
-            localization_recall=lr_micro,
-            score=scr_micro,
-            error_rate_cd=er_macro,
-            f_measure_cd=f_macro,
-            localization_error_cd=le_macro,
-            localization_recall_cd=lr_macro,
-            score_cd=scr_macro,
+            error_rate=float(er_micro),
+            f_measure=float(f_micro),
+            localization_error=float(le_micro),
+            localization_recall=float(lr_micro),
+            seld_score=float(scr_micro),
+            error_rate_cd=float(er_macro),
+            f_measure_cd=float(f_macro),
+            localization_error_cd=float(le_macro),
+            localization_recall_cd=float(lr_macro),
+            seld_score_cd=float(scr_macro),
         )
         # Return the required scores as tuples. The scores are returned in the
         # order they are passed in the `scores` argument
@@ -761,7 +761,7 @@ available_scores: Dict[str, Callable] = {
         SELDScore,
         name="segment_1s_seld",
         scores=(
-            "score_cd", "score",
+            "seld_score_cd", "seld_score",
             "localization_error_cd", "localization_error",
             "localization_recall_cd", "localization_recall",
             "error_rate_cd", "error_rate",
