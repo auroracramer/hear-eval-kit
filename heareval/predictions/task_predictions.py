@@ -74,6 +74,8 @@ PRED_TYPE_SPECIFIC_PARAM_GRID = {
 
 SEQ_PARAM_SUBGRID = {
     "sequence_chunk_length": [5],
+    # Should overwrite the hidden_norm below
+    "hidden_norm": [torch.nn.BatchNorm2d],
 }
 
 PARAM_GRID = {
