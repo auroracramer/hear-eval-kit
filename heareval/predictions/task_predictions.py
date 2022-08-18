@@ -804,7 +804,7 @@ class EventPredictionModel(AbstractPredictionModel):
         else:
             keys = ["target", "prediction", "prediction_logit", "filename", "timestamp"]
             flat_outputs = self._flatten_batched_outputs(
-                outputs, key=keys,
+                outputs, keys=keys,
                 # This is a list of string, not tensor, so we don't need to stack it
                 dont_stack=["filename"],
             )
