@@ -625,21 +625,13 @@ class SELDScore(ScoreFunction):
 
     @staticmethod
     def get_segment_length(
-        x: Dict[str, List[Dict[str, Any]]],
+        file_timestamps: Dict[str, Sequence[float]],
         duration_ms: int
     ) -> int:
-        event_list = next(iter(x.values()))
-        num_frames = 0
-        total_time = 0.0
-        for event in sorted(event_list, key=lambda v: v['start']):
-            frame_duration_ms = event['end'] - event['start']
-            # break if adding this event would exceed the segment length
-            if total_time + frame_duration_ms > duration_ms:
-                break
-            num_frames += 1
-            total_time += frame_duration_ms
-        # make sure we return at least one frame
-        return max(num_frames, 1)
+        timestamps = next(iter(file_timestamps.values()))
+        # Assumes uniform hop
+        hop_duration = timestamps[1] - timestamps[0]
+        return int(np.ceil(duration_ms / hop_duration))
 
     @staticmethod
     def seld_eval_event_container(
@@ -648,7 +640,7 @@ class SELDScore(ScoreFunction):
         label_to_idx: Dict[str, int],
         segment_duration_ms: int,
     ) -> Dict:
-        nb_label_frames_1s = SELDScore.get_segment_length(x, segment_duration_ms)
+        nb_label_frames_1s = SELDScore.get_segment_length(file_timestamps, segment_duration_ms)
         # Reformat event list for SELD metrics
         out_dict = {}
         for filename, event_list in x.items():
