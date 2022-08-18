@@ -302,12 +302,14 @@ def segment_labels(_pred_dict, _max_frames, _nb_label_frames_1s):
             if audio_frame not in _pred_dict:
                 continue
             for value in _pred_dict[audio_frame]:
+                # value = (class_idx, track_idx, azi, ele)
                 if value[0] not in loc_dict:
                     loc_dict[value[0]] = {}
 
                 block_frame = audio_frame - frame_cnt
                 if block_frame not in loc_dict[value[0]]:
                     loc_dict[value[0]][block_frame] = []
+                # loc_dict[class_idx][block_frame] = [(track_idx, azi, ele), ...]
                 loc_dict[value[0]][block_frame].append(value[1:])
 
         # Update the block wise details collected above in a global structure
@@ -315,7 +317,9 @@ def segment_labels(_pred_dict, _max_frames, _nb_label_frames_1s):
             if class_cnt not in output_dict[block_cnt]:
                 output_dict[block_cnt][class_cnt] = []
 
+            # keys -> block_frames
             keys = [k for k in loc_dict[class_cnt]]
+            # values -> list of (track_idx, azi, ele):for each block
             values = [loc_dict[class_cnt][k] for k in loc_dict[class_cnt]]
 
             output_dict[block_cnt][class_cnt].append([keys, values])
