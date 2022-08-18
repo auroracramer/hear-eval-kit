@@ -68,14 +68,18 @@ TASK_SPECIFIC_PARAM_GRID = {
 
 PRED_TYPE_SPECIFIC_PARAM_GRID = {
     "seld": {
-        "process_sequence": [True, False],
+        # for specifying parameters that are coupled
+        "COUPLED_process_sequence": [
+            {
+                "process_sequence": True,
+                "sequence_chunk_length": 5,
+                "hidden_norm": torch.nn.BatchNorm2d,
+            },
+            {
+                "process_sequence": False,
+            }
+        ]
     },
-}
-
-SEQ_PARAM_SUBGRID = {
-    "sequence_chunk_length": [5],
-    # Should overwrite the hidden_norm below
-    "hidden_norm": [torch.nn.BatchNorm2d],
 }
 
 PARAM_GRID = {
@@ -1991,9 +1995,6 @@ def task_predictions(
     if metadata["prediction_type"] in PRED_TYPE_SPECIFIC_PARAM_GRID:
         final_grid.update(PRED_TYPE_SPECIFIC_PARAM_GRID[metadata["prediction_type"]])
 
-        if bool(metadata.get("process_sequence")):
-            final_grid.update(SEQ_PARAM_SUBGRID)
-
     # From task specific parameter grid in the task metadata
     # We add this option, so that task specific param grid can be used
     # for secret tasks, without mentioning them in the global
@@ -2008,6 +2009,11 @@ def task_predictions(
 
     grid_point_results = []
     for confi, conf in tqdm(enumerate(confs[:grid_points]), desc="grid"):
+        # Update chosen coupled parameter configurations
+        coupled_keys = [k for k in conf.keys() if k.startswith("COUPLED_")]
+        for k in coupled_keys:
+            conf.update(conf.pop(k))
+
         logger.info(f"Grid point {confi+1} of {grid_points}: {conf}")
         grid_point_result = task_predictions_train(
             embedding_path=embedding_path,
