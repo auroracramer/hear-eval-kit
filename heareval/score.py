@@ -654,8 +654,8 @@ class SELDScore(ScoreFunction):
         for filename, event_list in x.items():
             # ensure list is sorted
             event_list = sorted(event_list, key=lambda v: v['start'])
-            num_frames = len(event_list)
             timestamps = file_timestamps[filename]
+            num_frames = len(timestamps)
             tmp_event_dict = {}
             # _pred_dict[frame_idx]: List[List[str, float, float, ...]]
             for event in event_list:
