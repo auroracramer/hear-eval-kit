@@ -761,11 +761,11 @@ available_scores: Dict[str, Callable] = {
         SELDScore,
         name="segment_1s_seld",
         scores=(
-            "score_macro", "score",
-            "localization_score_macro", "localization_score",
-            "localization_recall_macro", "localization_recall",
-            "error_rate_macro", "error_rate",
-            "f_measure_macro", "f_measure"
+            "score_cd", "score",
+            "localization_score_cd", "localization_score",
+            "localization_recall_cd", "localization_recall",
+            "error_rate_cd", "error_rate",
+            "f_measure_cd", "f_measure"
         ),
         segment_duration_ms=1000,
     ),
