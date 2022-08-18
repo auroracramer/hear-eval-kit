@@ -762,7 +762,7 @@ available_scores: Dict[str, Callable] = {
         name="segment_1s_seld",
         scores=(
             "score_cd", "score",
-            "localization_score_cd", "localization_score",
+            "localization_error_cd", "localization_error",
             "localization_recall_cd", "localization_recall",
             "error_rate_cd", "error_rate",
             "f_measure_cd", "f_measure"
