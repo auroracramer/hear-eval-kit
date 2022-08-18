@@ -148,6 +148,12 @@ EVENT_POSTPROCESSING_GRID = {
     #    "min_duration": [0, 62, 125, 250, 500, 1000],
 }
 
+PRED_TYPE_EVENT_POSTPROCESSING_GRID = {
+    "seld": {
+        "min_duration": [0]
+    },
+}
+
 NUM_WORKERS = int(multiprocessing.cpu_count() / (max(1, torch.cuda.device_count())))
 
 
@@ -1602,6 +1608,9 @@ def task_predictions_train(
             ]
         else:
             postprocessing_grid = EVENT_POSTPROCESSING_GRID
+
+        if metadata["prediction_type"] in PRED_TYPE_EVENT_POSTPROCESSING_GRID:
+            postprocessing_grid.update(PRED_TYPE_EVENT_POSTPROCESSING_GRID[metadata["prediction_type"]])
 
         predictor = EventPredictionModel(
             nfeatures=embedding_size,
