@@ -73,7 +73,7 @@ PRED_TYPE_SPECIFIC_PARAM_GRID = {
 }
 
 SEQ_PARAM_SUBGRID = {
-    "sequence_chunk_length": [50],
+    "sequence_chunk_length": [5],
 }
 
 PARAM_GRID = {
