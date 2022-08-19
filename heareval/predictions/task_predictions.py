@@ -1669,6 +1669,7 @@ def task_predictions_train(
     trainer = pl.Trainer(
         callbacks=[checkpoint_callback, early_stop_callback],
         gpus=gpus,
+        accelerator="auto",
         check_val_every_n_epoch=conf["check_val_every_n_epoch"],
         max_epochs=conf["max_epochs"],
         deterministic=deterministic,
