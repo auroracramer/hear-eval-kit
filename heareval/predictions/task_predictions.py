@@ -384,7 +384,7 @@ class FullyConnectedPrediction(torch.nn.Module):
         else:
             self.hidden = torch.nn.Identity()  # type: ignore
 
-        pred_shape = self.get_pred_shape(pred_only=True)
+        pred_shape = self.get_output_shape(pred_only=True)
 
         nout = reduce(mul, pred_shape, 1)
 
