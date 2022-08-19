@@ -1555,7 +1555,8 @@ def task_predictions_train(
     scores: List[ScoreFunction],
     conf: Dict,
     use_scoring_for_early_stopping: bool,
-    gpus: Any,
+    accelerator: str,
+    devices: int,
     in_memory: bool,
     deterministic: bool,
 ) -> GridPointResult:
@@ -1668,8 +1669,8 @@ def task_predictions_train(
     # profiler = pl.profiler.AdvancedProfiler(output_filename="predictions-profile.txt")
     trainer = pl.Trainer(
         callbacks=[checkpoint_callback, early_stop_callback],
-        gpus=gpus,
-        accelerator=("gpu" if gpus else "cpu"),
+        devices=devices,
+        accelerator=accelerator,
         check_val_every_n_epoch=conf["check_val_every_n_epoch"],
         max_epochs=conf["max_epochs"],
         deterministic=deterministic,
@@ -1950,7 +1951,8 @@ def task_predictions(
     embedding_path: Path,
     embedding_size: int,
     grid_points: int,
-    gpus: Optional[int],
+    accelerator: str,
+    devices: int,
     in_memory: bool,
     deterministic: bool,
     grid: str,
@@ -2035,7 +2037,8 @@ def task_predictions(
             scores=scores,
             conf=conf,
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
-            gpus=gpus,
+            accelerator=accelerator,
+            devices=devices,
             in_memory=in_memory,
             deterministic=deterministic,
         )
@@ -2069,7 +2072,8 @@ def task_predictions(
             scores=scores,
             conf=best_grid_point.conf,
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
-            gpus=gpus,
+            accelerator=accelerator,
+            devices=devices,
             in_memory=in_memory,
             deterministic=deterministic,
         )

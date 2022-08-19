@@ -62,12 +62,16 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
     type=click.INT,
 )
 @click.option(
-    "--gpus",
-    default=None if not torch.cuda.is_available() else "[0]",
-    help='GPUs to use, as JSON string (default: "[0]" if any '
-    "are available, none if not). "
-    "See https://pytorch-lightning.readthedocs.io/en/stable/advanced/multi_gpu.html#select-gpu-devices",  # noqa
+    "--accelerator",
+    default="gpu" if not torch.cuda.is_available() else "cpu",
+    help="accelerator to use (gpu or cpu)"
     type=str,
+)
+@click.option(
+    "--devices",
+    default=1,
+    help="Number of accelerator devices to use"
+    type=int,
 )
 @click.option(
     "--in-memory",
@@ -96,14 +100,13 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
 def runner(
     task_dirs: List[str],
     grid_points: int = 8,
-    gpus: Any = None if not torch.cuda.is_available() else "[0]",
+    accelerator: str = "gpu" if not torch.cuda.is_available() else "cpu",
+    devices: int = 1,
     in_memory: bool = True,
     deterministic: bool = True,
     grid: str = "default",
     shuffle: bool = False,
 ) -> None:
-    if gpus is not None:
-        gpus = json.loads(gpus)
 
     if shuffle:
         random.shuffle(task_dirs)
@@ -141,7 +144,8 @@ def runner(
             embedding_path=task_path,
             embedding_size=embedding_size,
             grid_points=grid_points,
-            gpus=gpus,
+            accelerator=accelerator,
+            devices=devices,
             in_memory=in_memory,
             deterministic=deterministic,
             grid=grid,
@@ -149,10 +153,11 @@ def runner(
         )
         sys.stdout.flush()
         gpu_max_mem_used = gpu_max_mem.measure()
+        ngpus = devices if accelerator == "gpu" else 0
         logger.info(
             f"DONE took {time.time() - start} seconds to complete task_predictions"
             f"(embedding_path={task_path}, embedding_size={embedding_size}, "
-            f"grid_points={grid_points}, gpus={gpus}, "
+            f"grid_points={grid_points}, gpus={ngpus}, "
             f"gpu_max_mem_used={gpu_max_mem_used}, "
             f"gpu_device_name={gpu_max_mem.device_name()}, in_memory={in_memory}, "
             f"deterministic={deterministic}, grid={grid})"
@@ -165,7 +170,8 @@ def runner(
                     "embedding_path": str(task_path),
                     "embedding_size": embedding_size,
                     "grid_points": grid_points,
-                    "gpus": gpus,
+                    "accelerator": accelerator,
+                    "devices": devices,
                     "gpu_max_mem": gpu_max_mem_used,
                     "gpu_device_name": gpu_max_mem.device_name(),
                     "in_memory": in_memory,
