@@ -352,9 +352,12 @@ class FullyConnectedPrediction(torch.nn.Module):
 
         self.prediction_type = prediction_type
         self.multitrack = bool(ntracks)
+        self.nlabels = nlabels
+        self.nspatial = nspatial
         self.ntracks = ntracks # for multitrack
         self.nsublabels = nsublabels # for avoseld_multiregion
         self.process_sequence = bool(conf.get("process_sequence"))
+        self.nfeatures = nfeatures
         hidden_modules: List[torch.nn.Module] = []
         curdim = nfeatures
         # Honestly, we don't really know what activation preceded
@@ -381,22 +384,7 @@ class FullyConnectedPrediction(torch.nn.Module):
         else:
             self.hidden = torch.nn.Identity()  # type: ignore
 
-        # Determine shape of prediction part of output shape (sans batch and frame dims)
-        if prediction_type == "multilabel" and self.multitrack:
-            pred_shape = (nlabels, ntracks)
-        elif prediction_type in ("multilabel", "multiclass"):
-            pred_shape = (nlabels,)
-        elif prediction_type == "avoseld_multiregion":
-            # Technically nsublabels could be used for other things, but
-            # let's not overcomplicate things for now
-            assert self.nsublabels
-            pred_shape = (nlabels, nsublabels)
-        elif prediction_type == "seld" and self.multitrack:
-            pred_shape = (nlabels, ntracks, nspatial)
-        elif prediction_type == "seld":
-            pred_shape = (nlabels, nspatial)
-        else:
-            raise ValueError(f"Unknown prediction_type {prediction_type}")
+        pred_shape = self.get_pred_shape(pred_only=True)
 
         nout = reduce(mul, pred_shape, 1)
 
@@ -436,6 +424,38 @@ class FullyConnectedPrediction(torch.nn.Module):
         else:
             raise ValueError(f"Unknown prediction_type {prediction_type}")
 
+    def get_input_shape(self):
+        # Determine shape of input (sans batch)
+        if self.process_sequence:
+            return (None, None, self.nfeatures,)
+        else:
+            return (None, self.nfeatures,)
+
+    def get_output_shape(self, pred_only=False):
+        # Determine shape of prediction part of output shape (sans batch and frame dims)
+        if self.prediction_type == "multilabel" and self.multitrack:
+            pred_shape = (self.nlabels, self.ntracks)
+        elif self.prediction_type in ("multilabel", "multiclass"):
+            pred_shape = (self.nlabels,)
+        elif self.prediction_type == "avoseld_multiregion":
+            # Technically nsublabels could be used for other things, but
+            # let's not overcomplicate things for now
+            assert self.nsublabels
+            pred_shape = (self.nlabels, self.nsublabels)
+        elif self.prediction_type == "seld" and self.multitrack:
+            pred_shape = (self.nlabels, self.ntracks, self.nspatial)
+        elif self.prediction_type == "seld":
+            pred_shape = (self.nlabels, self.nspatial)
+        else:
+            raise ValueError(f"Unknown prediction_type {self.prediction_type}")
+
+        if not pred_only:
+            if self.process_sequence:
+                pred_shape = (None, None) + pred_shape
+            else:
+                pred_shape = (None,) + pred_shape
+
+        return pred_shape
 
     def forward_loss_compatible(self, x: torch.Tensor) -> torch.Tensor:
         x = self.hidden(x)
@@ -487,7 +507,11 @@ class AbstractPredictionModel(pl.LightningModule):
             nfeatures, nlabels, prediction_type, conf,
             nspatial=nspatial, ntracks=ntracks, nsublabels=nsublabels,
         )
-        torchinfo.summary(self.predictor, input_size=(64, nfeatures))
+        if self.prediction.process_sequence:
+            input_size = (64, 5, nfeatures)
+        else:
+            input_size = (64, nfeatures)
+        torchinfo.summary(self.predictor, input_size=input_size)
         self.label_to_idx = label_to_idx
         self.idx_to_label: Dict[int, str] = {
             idx: label for (label, idx) in self.label_to_idx.items()
