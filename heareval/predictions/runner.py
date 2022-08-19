@@ -64,13 +64,13 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
 @click.option(
     "--accelerator",
     default="gpu" if not torch.cuda.is_available() else "cpu",
-    help="accelerator to use (gpu or cpu)"
+    help="Accelerator to use (gpu or cpu)",
     type=str,
 )
 @click.option(
     "--devices",
     default=1,
-    help="Number of accelerator devices to use"
+    help="Number of accelerator devices to use",
     type=int,
 )
 @click.option(
