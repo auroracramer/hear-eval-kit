@@ -100,7 +100,7 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
 def runner(
     task_dirs: List[str],
     grid_points: int = 8,
-    accelerator: str = "gpu" if not torch.cuda.is_available() else "cpu",
+    accelerator: str = "gpu" if torch.cuda.is_available() else "cpu",
     devices: int = 1,
     in_memory: bool = True,
     deterministic: bool = True,
