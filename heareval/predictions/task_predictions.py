@@ -507,7 +507,7 @@ class AbstractPredictionModel(pl.LightningModule):
             nfeatures, nlabels, prediction_type, conf,
             nspatial=nspatial, ntracks=ntracks, nsublabels=nsublabels,
         )
-        if self.prediction.process_sequence:
+        if self.predictor.process_sequence:
             input_size = (64, 5, nfeatures)
         else:
             input_size = (64, nfeatures)
