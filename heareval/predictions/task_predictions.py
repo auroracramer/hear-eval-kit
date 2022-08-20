@@ -794,14 +794,14 @@ class EventPredictionModel(AbstractPredictionModel):
         if self.include_seq_dim:
             keys = [
                 "target", "prediction", "prediction_logit", "filename",
-                "timestamp_list", "chunk_idx"
+                "timestamp_list", "nseq", "chunk_idx"
             ]
             flat_outputs = self._flatten_batched_outputs(
                 outputs, keys=keys,
                 # This is a list of string, not tensor, so we don't need to stack it
                 dont_stack=["filename", "timestamp_list", "chunk_idx",],
             )
-            raw_target, _prediction, raw_prediction_logit, _filename, _timestamp_lists, _chunk_idx = (
+            raw_target, _prediction, raw_prediction_logit, _filename, _timestamp_lists, _nseq, _chunk_idx = (
                 flat_outputs[key]
                 for key in keys
             )
@@ -815,18 +815,20 @@ class EventPredictionModel(AbstractPredictionModel):
 
             # Group by filename
             for fname, group in groupby(
-                enumerate(zip(_filename, _timestamp_lists, _chunk_idx)),
+                enumerate(zip(_filename, _timestamp_lists, _nseq, _chunk_idx)),
                 key=lambda x: x[1][0],
             ):
                 file_ex_idx_list, items = zip(*group)
-                _, file_timestamp_lists, file_chunk_idx_list = zip(*items)
+                _, file_timestamp_lists, file_chunk_nseq_list, file_chunk_idx_list = zip(*items)
                 # Sort by chunk indices
                 lidx_order = np.argsort(file_chunk_idx_list)
                 
                 for lidx in lidx_order:
                     chunk_timestamps = file_timestamp_lists[lidx].detach().cpu().tolist()
                     chunk_ex_idx = file_ex_idx_list[lidx]
-                    for chunk_seq_idx, ts in enumerate(chunk_timestamps):
+                    chunk_nseq = int(file_chunk_nseq_list[lidx])
+                    for chunk_seq_idx in range(chunk_nseq):
+                        ts = chunk_timestamps[chunk_seq_idx]
                         # Flatten out filenames, timestamps for each example
                         # and each sequence, which ignores padding
                         filename.append(fname)
@@ -839,7 +841,7 @@ class EventPredictionModel(AbstractPredictionModel):
             prediction = _prediction[ex_idx_list, seq_idx_list, ...]
             prediction_logit = raw_prediction_logit[ex_idx_list, seq_idx_list, ...]
 
-            del _prediction, _filename, _timestamp_lists, _chunk_idx
+            del _prediction, _filename, _timestamp_lists, _nseq, _chunk_idx
         else:
             keys = ["target", "prediction", "prediction_logit", "filename", "timestamp"]
             flat_outputs = self._flatten_batched_outputs(
@@ -1163,12 +1165,16 @@ class SplitMemmapDataset(Dataset):
             emb_ndimm1 = embeddings.ndim - 1
             lbl_ndimm1 = y.ndim - 1
 
+            metadata = self.metadata[idx]
+
             nseq = len(idx_list)
             npad = self.max_nseq - nseq
             if npad:
                 embeddings = F.pad(embeddings, (0, 0) * emb_ndimm1 + (0, npad))
                 y = F.pad(y, (0, 0) * lbl_ndimm1 + (0, npad))
-            return embeddings, y, nseq, self.metadata[idx]
+                metadata = copy.deepcopy(metadata)
+                metadata["timestamp_list"] += [metadata["timestamp_list"][-1] * 1e-12] * npad 
+            return embeddings, y, nseq, metadata
         else:
             return self.embeddings[idx], self.y[idx], self.metadata[idx]
 
