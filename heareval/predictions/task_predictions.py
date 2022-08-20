@@ -204,13 +204,13 @@ class BranchConcatModule(torch.nn.Module):
         return torch.cat(x_seq, dim=self.concat_dim)
 
 
-def get_mask_from_nseq(X: torch.tensor, nseq: torch.Tensor):
+def get_mask_from_nseq(X: torch.tensor, nseq: torch.Tensor, device: Any = None):
     nbatch, nframes, = X.shape[:2]
     assert nseq.ndim == 1
     assert nseq.shape[0] == nbatch
     # Create mask from nseq
     # https://stackoverflow.com/a/53403392
-    mask = torch.arange(nframes).expand(nbatch, nframes) < nseq.unsqueeze(1)
+    mask = torch.arange(nframes, device=device).expand(nbatch, nframes) < nseq.unsqueeze(1)
     # Add singleton dimensions to expand to loss shape
     # https://github.com/pytorch/pytorch/issues/9410#issuecomment-552786888
     mask = mask[(...,) + (None,) * (X.ndim - mask.ndim)] 
@@ -268,7 +268,7 @@ class ADPIT(torch.nn.Module):
 
         if nseq is not None:
             assert self.process_sequence
-            mask = get_mask_from_nseq(pred, nseq)
+            mask = get_mask_from_nseq(pred, nseq, device=self.device)
         else:
             mask = None
 
@@ -318,7 +318,7 @@ class ADPIT(torch.nn.Module):
                     for idx, other_perm_targets in enumerate(ninsts_perm_targets)
                     if idx != ninsts_m1
                 ],
-                torch.zeros_like(curr_perm_targets[0]),
+                torch.zeros_like(curr_perm_targets[0], device=self.device),
             )
             assert padding.shape == pred.shape
 
@@ -340,7 +340,7 @@ class ADPIT(torch.nn.Module):
                 perm_loss * (loss_min == perm_idx)
                 for perm_idx, perm_loss in enumerate(losses)
             ],
-            torch.zeros_like(losses[0]),
+            torch.zeros_like(losses[0], device=self.device),
         ).mean()
 
         return loss
