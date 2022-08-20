@@ -1173,7 +1173,7 @@ class SplitMemmapDataset(Dataset):
                 embeddings = F.pad(embeddings, (0, 0) * emb_ndimm1 + (0, npad))
                 y = F.pad(y, (0, 0) * lbl_ndimm1 + (0, npad))
                 metadata = copy.deepcopy(metadata)
-                metadata["timestamp_list"] += [metadata["timestamp_list"][-1] * 1e-12] * npad 
+                metadata["timestamp_list"] += [metadata["timestamp_list"][-1] + 1e-12] * npad 
             return embeddings, y, nseq, metadata
         else:
             return self.embeddings[idx], self.y[idx], self.metadata[idx]
