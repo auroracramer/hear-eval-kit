@@ -180,7 +180,7 @@ class OneHotToCrossEntropyLoss(pl.LightningModule):
         return self.loss(y_hat, y)
 
 
-class BranchModule(torch.nn.Module):
+class BranchModule(pl.LightningModule):
     def __init__(self, branches: Sequence):
         super(BranchModule, self).__init__()
         self.branches = torch.nn.ModuleList(branches)
@@ -188,7 +188,7 @@ class BranchModule(torch.nn.Module):
         return [branch(x) for branch in self.branches]
 
 
-class BranchConsumerModule(torch.nn.Module):
+class BranchConsumerModule(pl.LightningModule):
     def __init__(self, branches: Sequence):
         super(BranchConsumerModule, self).__init__()
         self.branches = torch.nn.ModuleList(branches)
@@ -196,7 +196,7 @@ class BranchConsumerModule(torch.nn.Module):
         return [branch(x) for x, branch in zip(x_seq, self.branches)]
 
 
-class BranchConcatModule(torch.nn.Module):
+class BranchConcatModule(pl.LightningModule):
     def __init__(self, concat_dim=-1):
         super(BranchConcatModule, self).__init__()
         self.concat_dim = concat_dim
@@ -217,7 +217,7 @@ def get_mask_from_nseq(X: torch.tensor, nseq: torch.Tensor, device: Any = None):
     return mask
 
 
-class ADPIT(torch.nn.Module):
+class ADPIT(pl.LightningModule):
     def __init__(
         self,
         nlabels: int,
