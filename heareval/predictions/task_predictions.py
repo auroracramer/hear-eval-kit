@@ -1157,8 +1157,8 @@ class SplitMemmapDataset(Dataset):
         if self.include_seq_dim:
             idx_list = self.ex_idx_lists[idx]
             
-            embeddings = self.embeddings[idx_list, ...]
-            y = self.y[idx_list, ...]
+            embeddings = torch.as_tensor(self.embeddings[idx_list, ...])
+            y = torch.as_tensor(self.y[idx_list, ...])
 
             emb_ndimm1 = embeddings.ndim - 1
             lbl_ndimm1 = y.ndim - 1
