@@ -1054,7 +1054,7 @@ class SplitMemmapDataset(Dataset):
                     if nseqchunk:
                         # Split into chunks
                         for chunk, chunk_idxs in enumerate(
-                            more_itertools.chunked(range(nseq))
+                            more_itertools.chunked(range(nseq), nseqchunk)
                         ):
                             ex_idx_list = [idx_list[lidx] for lidx in chunk_idxs]
                             self.ex_idx_lists.append(ex_idx_list)
