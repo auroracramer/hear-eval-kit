@@ -67,7 +67,7 @@ TASK_SPECIFIC_PARAM_GRID = {
 }
 
 class BatchNorm1dSeq(torch.nn.BatchNorm1d):
-    def forward(x: torch.Tensor):
+    def forward(self, x: torch.Tensor):
         # BatchNorm1d expects second dimension to be features, so swap it with
         # the sequence dimension for applying batch norm and swap back
         x = x.transpose(1, 2)
