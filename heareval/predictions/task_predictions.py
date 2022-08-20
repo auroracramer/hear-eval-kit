@@ -1156,11 +1156,12 @@ class SplitMemmapDataset(Dataset):
     def __getitem__(self, idx) -> Tuple[torch.Tensor, Union[torch.Tensor, Sequence[torch.Tensor]], Dict[str, Any]]:
         if self.include_seq_dim:
             idx_list = self.ex_idx_lists[idx]
-            emb_ndimm1 = len(self.embeddings.shape[1:])
-            lbl_ndimm1 = len(self.y.shape[1:])
-
+            
             embeddings = self.embeddings[idx_list, ...]
             y = self.y[idx_list, ...]
+
+            emb_ndimm1 = embeddings.ndim - 1
+            lbl_ndimm1 = y.ndim - 1
 
             nseq = len(idx_list)
             npad = self.max_nseq - nseq
