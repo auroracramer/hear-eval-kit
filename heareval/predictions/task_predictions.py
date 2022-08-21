@@ -13,6 +13,7 @@ TODO:
 """
 
 import copy
+import gc
 import json
 import logging
 import multiprocessing
@@ -2085,7 +2086,9 @@ def task_predictions(
         logger.info(f" result: {grid_point_result}")
         grid_point_results.append(grid_point_result)
         print_scores(grid_point_results, embedding_path, logger)
-
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     # Use the best hyperparameters to train models for remaining folds,
     # then compute test scores using the resulting models
     grid_point_results = sort_grid_points(grid_point_results)
@@ -2122,6 +2125,9 @@ def task_predictions(
             f"Validation Score for the Training Split: "
             f"{grid_point_result.validation_score}"
         )
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # Now test each of the trained models
     test_results = {}
@@ -2150,6 +2156,9 @@ def task_predictions(
                 "time_in_min": split_grid_points[i].time_in_min,
             }
         )
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # Make sure we have a test score for each fold
     assert len(test_results) == len(data_splits)
