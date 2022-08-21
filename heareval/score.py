@@ -631,6 +631,10 @@ class SELDScore(ScoreFunction):
         timestamps = next(iter(file_timestamps.values()))
         # Assumes uniform hop
         hop_duration = timestamps[1] - timestamps[0]
+        assert (np.isfinite(hop_duration) and (hop_duration > 0)) , (
+            f"Hop duration should be finite and positive, but got "
+            f"{hop_duration} ({timestamps[1]} - {timestamps[0]})"
+        )
         return int(np.ceil(duration_ms / hop_duration))
 
     @staticmethod
