@@ -80,13 +80,13 @@ PRED_TYPE_SPECIFIC_PARAM_GRID = {
         # for specifying parameters that are coupled
         "COUPLED_process_sequence": [
             {
+                "process_sequence": False,
+            },
+            {
                 "process_sequence": True,
                 "sequence_chunk_length": 5,
                 "hidden_norm": BatchNorm1dSeq,
             },
-            {
-                "process_sequence": False,
-            }
         ]
     },
 }
