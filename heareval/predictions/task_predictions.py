@@ -47,6 +47,7 @@ from scipy.ndimage import median_filter
 from sklearn.model_selection import ParameterGrid
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from tqdm.auto import tqdm
+from more_itertools import zip_equal
 
 from heareval.score import (
     ScoreFunction,
@@ -193,7 +194,7 @@ class BranchConsumerModule(pl.LightningModule):
         super(BranchConsumerModule, self).__init__()
         self.branches = torch.nn.ModuleList(branches)
     def forward(self, x_seq: Sequence[torch.Tensor]):
-        return [branch(x) for x, branch in zip(x_seq, self.branches)]
+        return [branch(x) for x, branch in zip_equal(x_seq, self.branches)]
 
 
 class BranchConcatModule(pl.LightningModule):
@@ -632,7 +633,7 @@ class AbstractPredictionModel(pl.LightningModule):
             if key in dont_stack:
                 continue
             elif key in stack_elements:
-                flat_outputs[key] = [torch.stack(v) for v in zip(*flat_outputs[key])]
+                flat_outputs[key] = [torch.stack(v) for v in zip_equal(*flat_outputs[key])]
             else:
                 flat_outputs[key] = torch.stack(flat_outputs[key])
         return flat_outputs
@@ -801,7 +802,7 @@ class EventPredictionModel(AbstractPredictionModel):
             flat_outputs = self._flatten_batched_outputs(
                 outputs, keys=keys,
                 # This is a list of string, not tensor, so we don't need to stack it
-                dont_stack=["filename", "timestamp_list", "chunk_idx",],
+                dont_stack=["filename"],
             )
             raw_target, _prediction, raw_prediction_logit, _filename, _timestamp_lists, _nseq, _chunk_idx = (
                 flat_outputs[key]
@@ -817,11 +818,11 @@ class EventPredictionModel(AbstractPredictionModel):
 
             # Group by filename
             for fname, group in groupby(
-                enumerate(zip(_filename, _timestamp_lists, _nseq, _chunk_idx)),
+                enumerate(zip_equal(_filename, _timestamp_lists, _nseq, _chunk_idx)),
                 key=lambda x: x[1][0],
             ):
-                file_ex_idx_list, items = zip(*group)
-                _, file_timestamp_lists, file_chunk_nseq_list, file_chunk_idx_list = zip(*items)
+                file_ex_idx_list, items = zip_equal(*group)
+                _, file_timestamp_lists, file_chunk_nseq_list, file_chunk_idx_list = zip_equal(*items)
                 # Sort by chunk indices
                 lidx_order = np.argsort(file_chunk_idx_list)
                 
@@ -877,7 +878,7 @@ class EventPredictionModel(AbstractPredictionModel):
         if name == "test" or self.use_scoring_for_early_stopping:
             file_timestamps = {}
             timestamp = timestamp.detach().cpu().numpy()
-            for fname, group in groupby(zip(filename, timestamp), key=lambda x: x[0]):
+            for fname, group in groupby(zip_equal(filename, timestamp), key=lambda x: x[0]):
                 slug = Path(fname).name
                 file_timestamps[slug] = sorted([ts for _, ts in group])
 
@@ -1167,7 +1168,7 @@ class SplitMemmapDataset(Dataset):
             emb_ndimm1 = embeddings.ndim - 1
             lbl_ndimm1 = y.ndim - 1
 
-            metadata = self.metadata[idx]
+            metadata = copy.deepcopy(self.metadata[idx])
 
             nseq = len(idx_list)
             npad = self.max_nseq - nseq
@@ -1175,8 +1176,11 @@ class SplitMemmapDataset(Dataset):
                 embeddings = F.pad(embeddings, (0, 0) * emb_ndimm1 + (0, npad))
                 y = F.pad(y, (0, 0) * lbl_ndimm1 + (0, npad))
                 if "timestamp_list" in metadata:
-                    metadata = copy.deepcopy(metadata)
                     metadata["timestamp_list"] += [metadata["timestamp_list"][-1] + 1e-6] * npad 
+
+            if "timestamp_list" in metadata:
+                metadata["timestamp_list"] = torch.tensor(metadata["timestamp_list"])
+            
             return embeddings, y, nseq, metadata
         else:
             return self.embeddings[idx], self.y[idx], self.metadata[idx]
@@ -1398,7 +1402,7 @@ def get_events_for_all_files(
     assert predictions.shape[0] == len(filenames)
     assert predictions.shape[0] == len(timestamps)
     event_files: Dict[str, Dict[float, Union[torch.Tensor, List[torch.Tensor]]]] = {}
-    for i, (filename, timestamp) in enumerate(zip(filenames, timestamps)):
+    for i, (filename, timestamp) in enumerate(zip_equal(filenames, timestamps)):
         slug = Path(filename).name
 
         # Key on the slug to be consistent with the ground truth
