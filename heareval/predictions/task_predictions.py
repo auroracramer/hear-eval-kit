@@ -1042,18 +1042,11 @@ class SplitMemmapDataset(Dataset):
                         "timestamp_list": [],
                         "chunk_idx": 0,
                     }
+                    # Sort in temporal order
                     idx_list = []
                     for idx, (_, timestamp) in sorted(tuple(group), key=lambda x: x[1][1]):
                         file_metadata["timestamp_list"].append(timestamp)
                         idx_list.append(idx)
-
-                    # Sort in temporal order
-                    time_order_idxs = np.argsort(file_metadata["timestamp_list"])
-                    file_metadata["timestamp_list"] = [
-                        file_metadata["timestamp_list"][lidx]
-                        for lidx in time_order_idxs
-                    ]
-                    idx_list = [idx_list[lidx] for lidx in time_order_idxs]
                     nseq = len(idx_list)
                     
                     if nseqchunk:
