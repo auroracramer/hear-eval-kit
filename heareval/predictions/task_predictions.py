@@ -765,7 +765,7 @@ class EventPredictionModel(AbstractPredictionModel):
     def _step(self, batch, batch_idx):
         # -> Dict[str, Union[torch.Tensor, List(str)]]:
         if self.include_seq_dim:
-            x, y, _, metadata = batch
+            x, y, nseq, metadata = batch
 
         else:
             x, y, metadata = batch
@@ -776,6 +776,8 @@ class EventPredictionModel(AbstractPredictionModel):
             "prediction_logit": y_hat,
             "target": y,
         }
+        if self.include_seq_dim:
+            z["nseq"] = nseq
         # https://stackoverflow.com/questions/38987/how-do-i-merge-two-dictionaries-in-a-single-expression-taking-union-of-dictiona
         return {**z, **metadata}
 
