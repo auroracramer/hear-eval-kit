@@ -4,6 +4,7 @@ Downstream training, using embeddings as input features and learning
 predictions.
 """
 
+import gc 
 import json
 import random
 import sys
@@ -181,6 +182,9 @@ def runner(
                 indent=4,
             )
         )
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
 
 if __name__ == "__main__":
