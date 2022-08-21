@@ -838,7 +838,7 @@ class EventPredictionModel(AbstractPredictionModel):
                         ex_idx_list.append(chunk_ex_idx)
                         seq_idx_list.append(chunk_seq_idx)
 
-            timestamp = torch.stack(timestamp)
+            timestamp = torch.tensor(timestamp)
             target = raw_target[ex_idx_list, seq_idx_list, ...]
             prediction = _prediction[ex_idx_list, seq_idx_list, ...]
             prediction_logit = raw_prediction_logit[ex_idx_list, seq_idx_list, ...]
