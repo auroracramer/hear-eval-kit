@@ -829,13 +829,13 @@ class EventPredictionModel(AbstractPredictionModel):
                 
                 for lidx in lidx_order:
                     chunk_timestamps = file_timestamp_lists[lidx].detach().cpu().tolist()
-                    chunk_ex_idx = file_ex_idx_list[lidx]
+                    chunk_ex_idx = int(file_ex_idx_list[lidx])
                     chunk_nseq = int(file_chunk_nseq_list[lidx])
                     for chunk_seq_idx in range(chunk_nseq):
-                        ts = chunk_timestamps[chunk_seq_idx]
+                        ts = float(chunk_timestamps[chunk_seq_idx])
                         # Flatten out filenames, timestamps for each example
                         # and each sequence, which ignores padding
-                        filename.append(fname)
+                        filename.append(str(fname))
                         timestamp.append(ts)
                         ex_idx_list.append(chunk_ex_idx)
                         seq_idx_list.append(chunk_seq_idx)
@@ -866,6 +866,7 @@ class EventPredictionModel(AbstractPredictionModel):
             prog_bar=True,
             logger=True,
         )
+        del raw_prediction_logit, raw_target
 
         epoch = self.current_epoch
         if name == "val":
