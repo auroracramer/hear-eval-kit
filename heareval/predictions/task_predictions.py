@@ -12,6 +12,7 @@ TODO:
     many models simultaneously with one disk read?
 """
 
+import os
 import copy
 import gc
 import json
@@ -21,6 +22,8 @@ import pickle
 import random
 import sys
 import time
+import shutil
+from tempfile import mkstemp
 from collections import defaultdict
 from itertools import groupby, permutations, product
 from functools import reduce
@@ -506,10 +509,10 @@ class AbstractPredictionModel(pl.LightningModule):
         nspatial: Optional[int] = None,
         nsublabels: Optional[int] = None,
         ntracks: Optional[int] = None,
+        test_predictions_path: Optional[str] = None,
     ):
         super().__init__()
 
-        self.save_hyperparameters(conf)
         self.use_scoring_for_early_stopping = use_scoring_for_early_stopping
 
         # Since we don't know how these embeddings are scaled
@@ -528,6 +531,29 @@ class AbstractPredictionModel(pl.LightningModule):
             idx: label for (label, idx) in self.label_to_idx.items()
         }
         self.scores = scores
+
+        # Create test predictions path
+        if not test_predictions_path:
+            fd, path = mkstemp(suffix=".pkl")
+            self.set_test_predictions_path(path)
+            os.close(fd)
+        else:
+            self.set_test_predictions_path(test_predictions_path)
+
+    def set_test_predictions_path(self, path):
+        self.test_predictions_path = path
+        if not os.path.exists(self.test_predictions_path):
+            Path(self.test_predictions_path).touch()
+
+    def save_test_predictions(self, test_predictions):
+        with open(self.test_predictions_path, "wb") as fp:
+            pickle.dump(test_predictions, fp)
+
+    @property
+    def test_predictions(self):
+        with open(self.test_predictions_path, "rb") as fp:
+            test_predictions = pickle.load(fp)
+        return test_predictions
 
     def forward(self, x):
         # x = self.layernorm(x)
@@ -658,6 +684,7 @@ class ScenePredictionModel(AbstractPredictionModel):
         scores: List[ScoreFunction],
         conf: Dict,
         use_scoring_for_early_stopping: bool = True,
+        test_predictions_path: Optional[str] = None,
     ):
         super().__init__(
             nfeatures=nfeatures,
@@ -667,7 +694,9 @@ class ScenePredictionModel(AbstractPredictionModel):
             scores=scores,
             conf=conf,
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
+            test_predictions_path=test_predictions_path,
         )
+        self.save_hyperparameters(ignore="test_predictions_path")
 
     def _score_epoch_end(self, name: str, outputs: List[Dict[str, List[Any]]]):
         flat_outputs = self._flatten_batched_outputs(
@@ -686,11 +715,13 @@ class ScenePredictionModel(AbstractPredictionModel):
 
         if name == "test":
             # Cache all predictions for later serialization
-            self.test_predictions = {
-                "target": target.detach().cpu(),
-                "prediction": prediction.detach().cpu(),
-                "prediction_logit": prediction_logit.detach().cpu(),
-            }
+            self.save_test_predictions(
+                {
+                    "target": target.detach().cpu(),
+                    "prediction": prediction.detach().cpu(),
+                    "prediction_logit": prediction_logit.detach().cpu(),
+                }
+            )
 
         if name == "test" or self.use_scoring_for_early_stopping:
             self.log_scores(
@@ -724,6 +755,8 @@ class EventPredictionModel(AbstractPredictionModel):
         spatial_projection: Optional[str] = None,
         nsublabels: Optional[int] = None,
         ntracks: Optional[int] = None,
+        test_predictions_path: Optional[str] = None,
+        epoch_best_postprocessing: Optional[Dict[int, Tuple[Tuple[str, Any], ...]]] = None,
     ):
         super().__init__(
             nfeatures=nfeatures,
@@ -736,13 +769,15 @@ class EventPredictionModel(AbstractPredictionModel):
             nspatial=spatial_projection_to_nspatial(spatial_projection),
             nsublabels=nsublabels,
             ntracks=ntracks,
+            test_predictions_path=test_predictions_path,
         )
+        self.save_hyperparameters(ignore=["test_predictions_path", "epoch_best_postprocessing"])
         self.target_events = {
             "val": validation_target_events,
             "test": test_target_events,
         }
         # For each epoch, what postprocessing parameters were best
-        self.epoch_best_postprocessing: Dict[int, Tuple[Tuple[str, Any], ...]] = {}
+        self.epoch_best_postprocessing: Dict[int, Tuple[Tuple[str, Any], ...]] = epoch_best_postprocessing or {}
         self.prediction_type = prediction_type
         self.postprocessing_grid = postprocessing_grid
         self.spatial_projection = spatial_projection
@@ -944,14 +979,16 @@ class EventPredictionModel(AbstractPredictionModel):
                     target = target.detach().cpu()
                     prediction = prediction.detach().cpu()
                     prediction_logit = prediction_logit.detach().cpu()
-                self.test_predictions = {
-                    "target": target,
-                    "prediction": prediction,
-                    "prediction_logit": prediction_logit,
-                    "target_events": self.target_events[name],
-                    "predicted_events": predicted_events,
-                    "timestamp": timestamp,
-                }
+                self.save_test_predictions(
+                    {
+                        "target": target,
+                        "prediction": prediction,
+                        "prediction_logit": prediction_logit,
+                        "target_events": self.target_events[name],
+                        "predicted_events": predicted_events,
+                        "timestamp": timestamp,
+                    }
+                )
 
             self.log_scores(
                 name,
@@ -1565,16 +1602,52 @@ class GridPointResult:
         score_mode: str,
         conf: Dict,
     ):
-        self.predictor = predictor
         self.model_path = model_path
         self.epoch = epoch
         self.time_in_min = time_in_min
         self.hparams = hparams
         self.postprocessing = postprocessing
-        self.trainer = trainer
         self.validation_score = validation_score
         self.score_mode = score_mode
         self.conf = conf
+
+        # Store configs for reconstructing predictor
+        # so we don't have to keep it loaded in memory
+        self.predictor_class = type(predictor)
+        self.predictor_load_args = {
+            "checkpoint_path": self.model_path,
+            "test_predictions_path": predictor.test_predictions_path,
+            "epoch_best_processing": predictor.epoch_best_postprocessing,
+        }
+
+        # Store configs for reconstructing trainer
+        # so we don't have to keep it loaded in memory
+        self.trainer_args = {
+            "callbacks": trainer.callbacks,
+            "devices": trainer._accelerator_connector._devices_flag,
+            "accelerator": trainer._accelerator_connector._accelerator_flag,
+            "check_val_every_n_epoch": trainer.check_val_every_n_epoch,
+            "max_epochs": trainer.fit_loop.max_epochs,
+            "num_sanity_val_steps": 0,
+            "profiler": "simple",
+            "logger": trainer.loggers,
+            "deterministic": trainer._accelerator_connector.deterministic,
+        }
+        self.trainer = trainer
+
+    @property
+    def trainer(self):
+        trainer = pl.Trainer(**self.trainer_args)
+        # This hack is necessary because we use the best validation epoch to
+        # choose the event postprocessing
+        trainer.fit_loop.current_epoch = self.epoch
+        return trainer
+
+    @property
+    def predictor(self):
+        return self.predictor_class.load_from_checkpoint(
+            **self.predictor_load_args
+        )
 
     def __repr__(self):
         return json.dumps(
@@ -1813,14 +1886,11 @@ def task_predictions_test(
         nseqchunk=grid_point.conf.get("sequence_chunk_length"),
     )
 
-    trainer = grid_point.trainer
-    # This hack is necessary because we use the best validation epoch to
-    # choose the event postprocessing
-    trainer.fit_loop.current_epoch = grid_point.epoch
-
     # Run tests
-    test_results = trainer.test(
-        ckpt_path=grid_point.model_path, dataloaders=test_dataloader
+    test_results = grid_point.trainer.test(
+        model=grid_point.predictor,
+        ckpt_path=grid_point.model_path,
+        dataloaders=test_dataloader
     )
     assert len(test_results) == 1, "Should have only one test dataloader"
     test_results = test_results[0]
@@ -2143,11 +2213,12 @@ def task_predictions(
             nlabels=nlabels,
             in_memory=in_memory,
         )
-
         # Cache predictions for detailed analysis
         prediction_file = embedding_path.joinpath(f"{test_fold_str}.predictions.pkl")
-        with open(prediction_file, "wb") as fp:
-            pickle.dump(split_grid_points[i].predictor.test_predictions, fp)
+        shutil.move(
+            split_grid_points[i].predictor_load_args["test_predictions_path"],
+            str(prediction_file)
+        )
 
         # Add model training values relevant to this split model
         test_results[test_fold_str].update(
