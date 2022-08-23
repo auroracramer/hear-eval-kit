@@ -1617,7 +1617,7 @@ class GridPointResult:
         self.predictor_load_args = {
             "checkpoint_path": self.model_path,
             "test_predictions_path": predictor.test_predictions_path,
-            "epoch_best_processing": predictor.epoch_best_postprocessing,
+            "epoch_best_processing": copy.deepcopy(predictor.epoch_best_postprocessing),
         }
 
         # Store configs for reconstructing trainer
