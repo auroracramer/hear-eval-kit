@@ -155,47 +155,58 @@ def get_timestamp_spatial_label(
         v1 = min(pre_t, key=partial(get_interval_dist, t=t)) if pre_t else None
         v2 = min(post_t, key=partial(get_interval_dist, t=t)) if post_t else None
 
-        if not v1:
-            spatial_data = v2.data[1]
-        elif not v2:
-            spatial_data = v1.data[1]
-        else:
-            spa1, spa2 = v1.data[1], v2.data[1]
-            t1, t2 = v1.begin, v2.begin
-            s = (t - t1) / (t2 - t1)
-            if projection not in VIDEO_AZIMUTH_REGION_PROJECTIONS:
-                spatial_data = tuple(
-                    linear_interpolate(x1, x2, s)
-                    for x1, x2 in zip(spa1, spa2)
-                )
-            else:
-                if projection == "video_azimuth_region_pointwise":
-                    # Get region closest to center point
-                    azi_region = get_video_azimuth_region(
-                        angular_interpolate(spa1[0], spa2[0], s),
-                        num_regions=video_num_regions,
-                        fov=video_fov,
+        spa1 = v1.data[1] if v1 else None
+        spa2 = v2.data[1] if v2 else None
+        t1 = v1.begin if v1 else None
+        t2 = v2.begin if v2 else None
+        s = (
+            (t - t1) / (t2 - t1)
+            if (t1 is not None and t2 is not None)
+            else None
+        )
 
-                    )
-                    spatial_data = (azi_region,)
-                else:
-                    # Get regions closest to left and right points and everything in between
-                    azi_region_left = get_video_azimuth_region(
-                        angular_interpolate(spa1[0], spa2[0]),
-                        num_regions=video_num_regions,
-                        fov=video_fov,
-                    )
-                    azi_region_right = get_video_azimuth_region(
-                        angular_interpolate(spa1[1], spa2[1]),
-                        num_regions=video_num_regions,
-                        fov=video_fov,
-                    )
-                    spatial_data = tuple(range(azi_region_left, azi_region_right + 1))
+        if (not v1) or (not v2):
+            # No interpolation necessary, choose the one that is defined
+            spatial_data = spa1 if v1 else spa2
+        elif projection in VIDEO_AZIMUTH_REGION_PROJECTIONS:
+            # Angular interpolation
+            spatial_data = tuple(
+                angular_interpolate(a1, a2, s)
+                for a1, a2 in zip(spa1, spa2)
+            )
+        else:
+            # Linear interpolation for assumed Cartesian coordinates
+            spatial_data = tuple(
+                linear_interpolate(x1, x2, s)
+                for x1, x2 in zip(spa1, spa2)
+            )
     else:
         raise ValueError(
             f"Invalid overlap resolution strategy: "
             f"{overlap_resolution_strategy}"
         )
+
+    if projection == "video_azimuth_region_pointwise":
+        assert len(spatial_data) == 1
+        # Get region closest to center point
+        azi_region = get_video_azimuth_region(
+            spatial_data[0],
+            num_regions=video_num_regions,
+            fov=video_fov,
+        )
+        spatial_data = (azi_region,)
+    elif projection == "video_azimuth_region_boxwise":
+        assert len(spatial_data) == 2
+        # Get regions closest to left and right points and everything in between
+        azi_region_left, azi_region_right = (
+            get_video_azimuth_region(
+                azi,
+                num_regions=video_num_regions,
+                fov=video_fov,
+            )
+            for azi in spatial_data
+        )
+        spatial_data = tuple(range(azi_region_left, azi_region_right + 1))
 
     return spatial_data
 
