@@ -1132,7 +1132,7 @@ class SplitMemmapDataset(Dataset):
         assert len(self.labels) == self.dim[0]
         assert len(self.labels) == len(self.embeddings)
         assert self.embeddings[0].shape[0] == self.dim[1]
-        if self.prediction_type == "seld":
+        if self.prediction_type in ("seld", "avoseld_multiregion"):
             assert len(self.spatial) == self.dim[0]
             assert len(self.spatial) == len(self.embeddings)
 
@@ -1145,7 +1145,7 @@ class SplitMemmapDataset(Dataset):
 
         for idx in tqdm(range(len(self.labels))):
             labels = [
-                ((self.label_to_idx[str(label[0])],) + tuple(label[1:]))
+                tuple(self.label_to_idx[str(lbl[0])] for lbl in label)
                 if isinstance(label, (list, tuple))
                 else self.label_to_idx[str(label)]
                 for label in self.labels[idx]
@@ -1159,6 +1159,11 @@ class SplitMemmapDataset(Dataset):
                     num_tracks=self.ntracks
                 )
             elif self.prediction_type == "avoseld_multiregion":
+                labels = [labels
+                    (lbl, spa)
+                    for (lbl, spa_vals) in zip(labels, self.spatial[idx])
+                    for spa in spa_vals
+                ]
                 y_lbl = label_to_binary_tensor(
                     labels,
                     self.nlabels,
@@ -1291,7 +1296,7 @@ def create_events_from_prediction(
                 cls_filter_shape += (1,)
             class_predictions = median_filter(class_predictions, size=cls_filter_shape)
 
-            if prediction_type == "seld":
+            if prediction_type in ("seld", "avoseld_multiregion"):
                 spa_filter_shape = (filter_width, 1, 1)
                 if multitrack:
                     spa_filter_shape += (1,)
