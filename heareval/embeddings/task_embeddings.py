@@ -406,7 +406,7 @@ def memmap_embeddings(
             ), f"{emb.shape[0]} != {len(timestamps)}"
             assert len(lbl) == len(timestamps), f"{len(lbl)} != {len(timestamps)}"
 
-            if metadata["prediction_type"] == "seld":
+            if metadata["prediction_type"] in ("seld", "avoseld_multiregion"):
                 spa = json.load(
                     open(str(embedding_file).replace("embedding.npy", "target-spatial.json"))
                 )
@@ -436,7 +436,7 @@ def memmap_embeddings(
             "wt",
         ).write(json.dumps(filename_timestamps, indent=4))
 
-        if metadata["prediction_type"] == "seld":
+        if metadata["prediction_type"] in ("seld", "avoseld_multiregion"):
             pickle.dump(
                 spatial,
                 open(
