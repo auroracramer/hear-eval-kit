@@ -100,8 +100,12 @@ def spatial_projection_to_nspatial(projection: Optional[str]) -> int:
     """
     if projection in ("unit_xy_disc", "unit_yz_disc"):
         return 2
-    elif projection is None or projection in ("unit_sphere", "none"):
+    elif projection == "unit_sphere":
         return 3
+    elif projection in ("video_azimuth_region_pointwise", "video_azimuth_region_boxwise"):
+        return None
+    elif projection is None or projection == "none":
+        return None
     else:
         raise ValueError(f"Invalid spatial projection {projection}")
 
