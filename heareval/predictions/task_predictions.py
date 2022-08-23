@@ -1140,7 +1140,7 @@ class SplitMemmapDataset(Dataset):
 
         for idx in tqdm(range(len(self.labels))):
             labels = [
-                tuple(self.label_to_idx[str(lbl[0])] for lbl in label)
+                ((self.label_to_idx[str(label[0])],) + tuple(label[1:]))
                 if isinstance(label, (list, tuple))
                 else self.label_to_idx[str(label)]
                 for label in self.labels[idx]
