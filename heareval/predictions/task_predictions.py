@@ -512,7 +512,7 @@ class AbstractPredictionModel(pl.LightningModule):
         test_predictions_path: Optional[str] = None,
     ):
         super().__init__()
-
+        self.save_hyperparameters(conf)
         self.use_scoring_for_early_stopping = use_scoring_for_early_stopping
 
         # Since we don't know how these embeddings are scaled
