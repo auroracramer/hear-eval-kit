@@ -971,14 +971,9 @@ class EventPredictionModel(AbstractPredictionModel):
 
             if name == "test":
                 # Cache all predictions for later serialization
-                if self.prediction_type == "seld":
-                    target = [v.detach().cpu() for v in target]
-                    prediction = [v.detach().cpu() for v in prediction]
-                    prediction_logit = [v.detach().cpu() for v in prediction_logit]
-                else:
-                    target = target.detach().cpu()
-                    prediction = prediction.detach().cpu()
-                    prediction_logit = prediction_logit.detach().cpu()
+                target = target.detach().cpu()
+                prediction = prediction.detach().cpu()
+                prediction_logit = prediction_logit.detach().cpu()
                 self.save_test_predictions(
                     {
                         "target": target,
@@ -1053,7 +1048,7 @@ class SplitMemmapDataset(Dataset):
             open(embedding_path.joinpath(f"{split_name}.target-labels.pkl"), "rb")
         )
         self.spatial: Optional[List] = None
-        if self.prediction_type == "seld":
+        if self.prediction_type in ("seld", "avoseld_multiregion"):
             self.spatial = pickle.load(
                 open(embedding_path.joinpath(f"{split_name}.target-spatial.pkl"), "rb")
             )
