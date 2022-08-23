@@ -1154,7 +1154,7 @@ class SplitMemmapDataset(Dataset):
                     num_tracks=self.ntracks
                 )
             elif self.prediction_type == "avoseld_multiregion":
-                labels = [labels
+                labels = [
                     (lbl, spa)
                     for (lbl, spa_vals) in zip(labels, self.spatial[idx])
                     for spa in spa_vals
