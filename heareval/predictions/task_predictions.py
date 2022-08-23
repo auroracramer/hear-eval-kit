@@ -1995,7 +1995,7 @@ def get_splits_from_metadata(metadata: Dict) -> List[Dict[str, List[str]]]:
 
     """
     data_splits: List[Dict[str, List[str]]]
-    if metadata["split_mode"] == "trainvaltest":
+    if metadata["split_mode"] in ["trainvaltest", "stratified_trainvaltest"]:
         # There are train/validation/test splits predefined. These are the only splits
         # that will be considered during training and testing.
         data_splits = [
@@ -2005,7 +2005,7 @@ def get_splits_from_metadata(metadata: Dict) -> List[Dict[str, List[str]]]:
                 "test": ["test"],
             }
         ]
-    elif metadata["split_mode"] in ["new_split_kfold", "presplit_kfold"]:
+    elif metadata["split_mode"] in ["new_split_kfold", "new_split_stratified_kfold", "presplit_kfold"]:
         folds = metadata["splits"]
         # Folds should be a list of strings
         assert all(isinstance(x, str) for x in folds)
