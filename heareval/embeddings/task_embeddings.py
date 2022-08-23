@@ -552,6 +552,9 @@ def task_embeddings(
                     labels, spatial = get_labels_and_spatial_for_timestamps(
                         file_data_list, timestamps,
                         spatial_projection=metadata["spatial_projection"],
+                        overlap_resolution_strategy="interpolate",
+                        video_fov=metadata["fov"],
+                        video_num_regions=metadata["num_regions"],
                     )
                     assert len(labels) == len(filenames)
                     assert len(labels[0]) == len(timestamps[0])
