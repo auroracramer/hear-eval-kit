@@ -28,9 +28,9 @@ def get_event_spatial_label(
         # Account for egocentric vs. standard spherical phi convention too
         phi = np.deg2rad(90.0 - ele)
         rho = float(event.get("distance", 1.0))
-        x = rho * np.sin(phi) * np.cos(theta)
-        y = rho * np.sin(phi) * np.sin(theta)
-        z = rho * np.cos(phi)
+        x = float(rho * np.sin(phi) * np.cos(theta))
+        y = float(rho * np.sin(phi) * np.sin(theta))
+        z = float(rho * np.cos(phi))
     
     spatial: Tuple[float, ...]
     if projection == "unit_xy_disc":
@@ -41,9 +41,19 @@ def get_event_spatial_label(
         spatial = (x, y, z)
     elif projection in video_azimuth_region_projections:
         if projection == "video_azimuth_region_pointwise":
-            spatial = (event["azimuth"],)
+            azi = float(event["azimuth"])
+            assert -180 <= azi < 180, (
+                f"azimuth must be in range [-180, 180) but got {azi}"
+            )
+            spatial = (azi,)
         else:
-            spatial = (event["azimuthleft"], event["azimuthright"])
+            azi_left = float(event["azimuthleft"])
+            azi_right = float(event["azimuthright"])
+            assert -180 <= azi_left < azi_right < 180, (
+                f"azimuth left and right must be in range [-180, 180) with "
+                f"left < right but got ({azi_left}, {azi_right})"
+            )
+            spatial = (azi_left, azi_right)
     else:
         raise ValueError(f"Invalid spatial projection: {projection}")
 
@@ -113,18 +123,18 @@ def get_canonical_angle(x: float) -> float:
 
 def angular_interpolate(a1: float, a2: float, s: float) -> float:
     """ Linearly interpolate between two angles """
-    return get_canonical_angle(a1 + s * get_smallest_angle(a1, a2))
+    return float(get_canonical_angle(a1 + s * get_smallest_angle(a1, a2)))
 
 
 def get_video_azimuth_region(a: float, num_regions: int, fov:float) -> int:
     """ Get region index for an angle """
     region_centers = get_video_azimuth_region_centers(num_regions, fov)
-    return np.abs(region_centers - a).argmin()
+    return int(np.abs(region_centers - a).argmin())
 
 
 def linear_interpolate(x1: float, x2: float, s: float) -> float:
     """ Linearly interpolate between two points """
-    return (1.0 - s) * x1 + s * x2
+    return float((1.0 - s) * x1 + s * x2)
 
 
 def get_interval_dist(x: Interval, t: float) -> float:
