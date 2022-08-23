@@ -49,7 +49,7 @@ def get_event_spatial_label(
         else:
             azi_left = float(event["azimuthleft"])
             azi_right = float(event["azimuthright"])
-            assert -180 <= azi_left < azi_right < 180, (
+            assert -180 <= azi_left <= azi_right < 180, (
                 f"azimuth left and right must be in range [-180, 180) with "
                 f"left < right but got ({azi_left}, {azi_right})"
             )
