@@ -1633,7 +1633,6 @@ class GridPointResult:
             "logger": trainer.loggers,
             "deterministic": trainer._accelerator_connector.deterministic,
         }
-        self.trainer = trainer
 
     @property
     def trainer(self):
