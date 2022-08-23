@@ -154,14 +154,14 @@ def get_timestamp_spatial_label(
         post_t = [interval for interval in interval_list if interval.begin >= t]
         v1 = min(pre_t, key=partial(get_interval_dist, t=t)) if pre_t else None
         v2 = min(post_t, key=partial(get_interval_dist, t=t)) if post_t else None
-        t1, t2 = v1.begin, v2.begin
-        spa1, spa2 = v1.data[1], v2.data[1]
 
         if not v1:
-            spatial_data = spa1
+            spatial_data = v2.data[1]
         elif not v2:
-            spatial_data = spa2
+            spatial_data = v1.data[1]
         else:
+            spa1, spa2 = v1.data[1], v2.data[1]
+            t1, t2 = v1.begin, v2.begin
             s = (t - t1) / (t2 - t1)
             if projection not in VIDEO_AZIMUTH_REGION_PROJECTIONS:
                 spatial_data = tuple(
