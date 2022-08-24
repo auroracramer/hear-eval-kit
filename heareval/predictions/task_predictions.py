@@ -1761,11 +1761,13 @@ def task_predictions_train(
 
     if use_scoring_for_early_stopping:
         # First score is the target
-        target_score = f"val_{str(scores[0])}"
-        if scores[0].maximize:
+        target_score_fn = available_scores[scores[0]](label_to_idx=label_to_idx)
+        target_score = f"val_{str(target_score_fn)}"
+        if target_score_fn.maximize:
             mode = "max"
         else:
             mode = "min"
+        del target_score_fn
     else:
         # This loss is much faster, but will give poorer scores
         target_score = "val_loss"
