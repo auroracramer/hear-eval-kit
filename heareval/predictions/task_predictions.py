@@ -503,7 +503,7 @@ class AbstractPredictionModel(pl.LightningModule):
         label_to_idx: Dict[str, int],
         nlabels: int,
         prediction_type: str,
-        scores: List[ScoreFunction],
+        scores: List[str],
         conf: Dict,
         use_scoring_for_early_stopping: bool = True,
         nspatial: Optional[int] = None,
@@ -530,7 +530,10 @@ class AbstractPredictionModel(pl.LightningModule):
         self.idx_to_label: Dict[int, str] = {
             idx: label for (label, idx) in self.label_to_idx.items()
         }
-        self.scores = scores
+        self.scores = [
+            available_scores[score](label_to_idx=label_to_idx)
+            for score in scores
+        ]
 
         # Create test predictions path
         if not test_predictions_path:
@@ -681,7 +684,7 @@ class ScenePredictionModel(AbstractPredictionModel):
         label_to_idx: Dict[str, int],
         nlabels: int,
         prediction_type: str,
-        scores: List[ScoreFunction],
+        scores: List[str],
         conf: Dict,
         use_scoring_for_early_stopping: bool = True,
         test_predictions_path: Optional[str] = None,
@@ -746,7 +749,7 @@ class EventPredictionModel(AbstractPredictionModel):
         label_to_idx: Dict[str, int],
         nlabels: int,
         prediction_type: str,
-        scores: List[ScoreFunction],
+        scores: List[str],
         validation_target_events: Dict[str, List[Dict[str, Any]]],
         test_target_events: Dict[str, List[Dict[str, Any]]],
         postprocessing_grid: Dict[str, List[float]],
@@ -1667,7 +1670,7 @@ def task_predictions_train(
     data_splits: Dict[str, List[str]],
     label_to_idx: Dict[str, int],
     nlabels: int,
-    scores: List[ScoreFunction],
+    scores: List[str],
     conf: Dict,
     use_scoring_for_early_stopping: bool,
     accelerator: str,
@@ -2087,10 +2090,6 @@ def task_predictions(
     # wandb.init(project="heareval", tags=["predictions", embedding_path.name])
 
     label_to_idx = label_vocab_as_dict(label_vocab, key="label", value="idx")
-    scores = [
-        available_scores[score](label_to_idx=label_to_idx)
-        for score in metadata["evaluation"]
-    ]
 
     use_scoring_for_early_stopping = metadata.get(
         "use_scoring_for_early_stopping", True
@@ -2146,7 +2145,7 @@ def task_predictions(
             data_splits=data_splits[0],
             label_to_idx=label_to_idx,
             nlabels=nlabels,
-            scores=scores,
+            scores=metadata["evaluation"],
             conf=conf,
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
             accelerator=accelerator,
@@ -2183,7 +2182,7 @@ def task_predictions(
             data_splits=split,
             label_to_idx=label_to_idx,
             nlabels=nlabels,
-            scores=scores,
+            scores=metadata["evaluation"],
             conf=best_grid_point.conf,
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
             accelerator=accelerator,
