@@ -348,6 +348,9 @@ def pairwise_determine_similar_location(sed, doa, thresh_unify):
 
 
 def get_merged_multitrack_seld_events(sed_pred, doa_pred, thresh_unify):
+    if sed_pred.shape[0] == doa_pred.shape[0] == 3:
+        # If 3 tracks, use the hard-coded version in case its faster
+        return get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify)
     output = []
     merge_matrix = pairwise_determine_similar_location(sed_pred, doa_pred, thresh_unify)
     num_merges, merge_labels = connected_components(csgraph=csr_matrix(merge_matrix))
@@ -355,4 +358,57 @@ def get_merged_multitrack_seld_events(sed_pred, doa_pred, thresh_unify):
         merge_mask = merge_labels == merge_idx
         doa_fc = doa_pred[merge_mask, :].mean(axis=0)
         output.append(doa_fc)
+    return output
+
+
+def determine_similar_location_3track(sed_pred0, sed_pred1, doa_pred0, doa_pred1, thresh_unify):
+    # https://github.com/sharathadavanne/seld-dcase2022/search?q=unify#L55
+    if (sed_pred0 == 1) and (sed_pred1 == 1):
+        if distance_between_cartesian_coordinates(*doa_pred0, *doa_pred1) < thresh_unify:
+            return 1
+        else:
+            return 0
+    else:
+        return 0
+
+
+def get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify):
+    # https://github.com/sharathadavanne/seld-dcase2022/search?q=unify#L103
+    output = []
+    flag_0sim1 = determine_similar_location_3track(
+        sed_pred[0], sed_pred[1], doa_pred[0], doa_pred[1], thresh_unify
+    )
+    flag_1sim2 = determine_similar_location_3track(
+        sed_pred[1], sed_pred[2], doa_pred[1], doa_pred[2], thresh_unify
+    )
+    flag_2sim0 = determine_similar_location_3track(
+        sed_pred[1], sed_pred[2], doa_pred[1], doa_pred[2], thresh_unify
+    )
+    # unify or not unify according to flag
+    if flag_0sim1 + flag_1sim2 + flag_2sim0 == 0:
+        if sed_pred[0] > 0.5:
+            output.append(doa_pred[0])
+        if sed_pred[1] > 0.5:
+            output.append(doa_pred[1])
+        if sed_pred[2] > 0.5:
+            output.append(doa_pred[2])
+    elif flag_0sim1 + flag_1sim2 + flag_2sim0 == 1:
+        if flag_0sim1:
+            if sed_pred[2] > 0.5:
+                output.append(doa_pred[2])
+            doa_pred_fc = (doa_pred[0] + doa_pred[1]) / 2
+            output.append(doa_pred_fc)
+        elif flag_1sim2:
+            if sed_pred[0] > 0.5:
+                output.append(doa_pred[0])
+            doa_pred_fc = (doa_pred[1] + doa_pred[2]) / 2
+            output.append(doa_pred_fc)
+        elif flag_2sim0:
+            if sed_pred[1] > 0.5:
+                output.append(doa_pred[1])
+            doa_pred_fc = (doa_pred[2] + doa_pred[0]) / 2
+            output.append(doa_pred_fc)
+    elif flag_0sim1 + flag_1sim2 + flag_2sim0 >= 2:
+        doa_pred_fc = (doa_pred[0] + doa_pred[1] + doa_pred[2]) / 3
+        output.append(doa_pred_fc)
     return output
