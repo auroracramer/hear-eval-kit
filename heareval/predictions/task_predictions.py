@@ -154,6 +154,17 @@ FASTER_PARAM_GRID.update(
     }
 )
 
+DEBUG_PARAM_GRID = copy.deepcopy(PARAM_GRID)
+DEBUG_PARAM_GRID.update(
+    {
+        "hidden_layers": [1],
+        "hidden_dim": [16],
+        "patience": [1],
+        "max_epochs": [1],
+        "check_val_every_n_epoch": [1],
+    }
+)
+
 # These are good for dcase, change for other event-based secret tasks
 EVENT_POSTPROCESSING_GRID = {
     "median_filter_ms": [250],
@@ -1797,8 +1808,7 @@ def task_predictions_train(
         num_sanity_val_steps=0,
         # profiler=profiler,
         # profiler="pytorch",
-        profiler="advanced",
-        # profiler="simple",
+        profiler="simple",
         logger=logger,
     )
     train_dataloader = dataloader_from_split_name(
@@ -2108,6 +2118,8 @@ def task_predictions(
         final_grid = copy.copy(FAST_PARAM_GRID)
     elif grid == "faster":
         final_grid = copy.copy(FASTER_PARAM_GRID)
+    elif grid == "debug":
+        final_grid = copy.copy(DEBUG_PARAM_GRID)
     else:
         raise ValueError(
             f"Unknown grid type: {grid}. Please select default, fast, or faster"
