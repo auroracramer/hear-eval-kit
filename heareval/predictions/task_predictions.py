@@ -1797,7 +1797,8 @@ def task_predictions_train(
         num_sanity_val_steps=0,
         # profiler=profiler,
         # profiler="pytorch",
-        profiler="simple",
+        profiler="advanced",
+        # profiler="simple",
         logger=logger,
     )
     train_dataloader = dataloader_from_split_name(
