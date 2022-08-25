@@ -1195,7 +1195,7 @@ class SplitMemmapDataset(Dataset):
             nseq = len(idx_list)
             npad = self.max_nseq - nseq
             if npad:
-                embeddings = np.pad(embeddings, (0, npad) + (0, 0) * emb_ndimm1)
+                embeddings = np.pad(embeddings, ((0, npad),) + ((0, 0),) * emb_ndimm1)
                 y = F.pad(y, (0, 0) * lbl_ndimm1 + (0, npad))
                 if "timestamp_list" in metadata:
                     metadata["timestamp_list"] += [metadata["timestamp_list"][-1] + 1e-6] * npad 
