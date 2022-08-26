@@ -636,12 +636,12 @@ class AbstractPredictionModel(pl.LightningModule):
 
     def _flatten_batched_outputs(
         self,
-        outputs,  #: Union[torch.Tensor, List[torch.Tensor], List[str]],
+        outputs,  #: Union[torch.Tensor, List[str]],
         keys: List[str],
         dont_stack: Optional[List[str]] = None,
         stack_elements: Optional[List[str]] = None
     ) -> Dict:
-        # ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor], List[str]]]:
+        # ) -> Dict[str, Union[torch.Tensor, List[str]]]:
         flat_outputs_default: DefaultDict = defaultdict(list)
         dont_stack = dont_stack or []
         stack_elements = stack_elements or []
@@ -1188,7 +1188,7 @@ class SplitMemmapDataset(Dataset):
         else:
             return self.dim[0]
 
-    def __getitem__(self, idx) -> Tuple[torch.Tensor, Union[torch.Tensor, Sequence[torch.Tensor]], Dict[str, Any]]:
+    def __getitem__(self, idx) -> Union[Tuple[torch.Tensor, torch.Tensor, Dict[str, Any]], Tuple[torch.Tensor, torch.Tensor, int, Dict[str, Any]]]:
         if self.include_seq_dim:
             idx_list = self.ex_idx_lists[idx]
             
@@ -1438,7 +1438,7 @@ def get_events_for_all_files(
     # timestamps are in sorted order. But this makes sure of it.
     assert predictions.shape[0] == len(filenames)
     assert predictions.shape[0] == len(timestamps)
-    event_files: Dict[str, Dict[float, Union[torch.Tensor, List[torch.Tensor]]]] = {}
+    event_files: Dict[str, Dict[float, torch.Tensor]]] = {}
     for i, (filename, timestamp) in enumerate(zip_equal(filenames, timestamps)):
         slug = Path(filename).name
 
