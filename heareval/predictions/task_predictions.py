@@ -1015,6 +1015,7 @@ class SplitMemmapDataset(Dataset):
         self.ntracks = ntracks
         self.nsublabels = nsublabels
         self.include_seq_dim = include_seq_dim
+        self.in_memory = in_memory
 
         self.dim = tuple(
             json.load(
@@ -1184,7 +1185,10 @@ class SplitMemmapDataset(Dataset):
         if self.include_seq_dim:
             idx_list = self.ex_idx_lists[idx]
             
-            embeddings = self.embeddings[idx_list, ...]
+            if self.in_memory:
+                embeddings = self.embeddings[idx_list, ...]
+            else:
+                embeddings = torch.tensor(self.embeddings[idx_list, ...])
             y = self.y[idx_list, ...]
 
             emb_ndimm1 = embeddings.ndim - 1
@@ -1195,13 +1199,13 @@ class SplitMemmapDataset(Dataset):
             nseq = len(idx_list)
             npad = self.max_nseq - nseq
             if npad:
-                embeddings = np.pad(embeddings, ((0, npad),) + ((0, 0),) * emb_ndimm1)
+                embeddings = F.pad(embeddings, (0, 0) * emb_ndimm1 + (0, npad))
                 y = F.pad(y, (0, 0) * lbl_ndimm1 + (0, npad))
                 if "timestamp_list" in metadata:
                     metadata["timestamp_list"] += [metadata["timestamp_list"][-1] + 1e-6] * npad 
 
             if "timestamp_list" in metadata:
-                metadata["timestamp_list"] = np.array(metadata["timestamp_list"])
+                metadata["timestamp_list"] = torch.tensor(metadata["timestamp_list"])
             
             return embeddings, y, nseq, metadata
         else:
