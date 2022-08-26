@@ -1635,6 +1635,7 @@ class GridPointResult:
             "check_val_every_n_epoch": trainer.check_val_every_n_epoch,
             "max_epochs": trainer.fit_loop.max_epochs,
             "num_sanity_val_steps": 0,
+            "auto_select_gpus": True,
             "profiler": "simple",
             "logger": trainer.loggers,
             "deterministic": trainer._accelerator_connector.deterministic,
@@ -1799,6 +1800,7 @@ def task_predictions_train(
         num_sanity_val_steps=0,
         # profiler=profiler,
         profiler="pytorch",
+        auto_select_gpus=True,
         # profiler="simple",
         logger=logger,
     )
