@@ -1438,7 +1438,7 @@ def get_events_for_all_files(
     # timestamps are in sorted order. But this makes sure of it.
     assert predictions.shape[0] == len(filenames)
     assert predictions.shape[0] == len(timestamps)
-    event_files: Dict[str, Dict[float, torch.Tensor]]] = {}
+    event_files: Dict[str, Dict[float, torch.Tensor]] = {}
     for i, (filename, timestamp) in enumerate(zip_equal(filenames, timestamps)):
         slug = Path(filename).name
 
