@@ -1216,6 +1216,10 @@ class SplitMemmapDataset(Dataset):
             
             return embeddings, y, nseq, metadata
         else:
+            if self.in_memory:
+                embeddings = self.embeddings[idx]
+            else:
+                embeddings = torch.tensor(self.embeddings[idx])
             return self.embeddings[idx], self.y[idx], self.metadata[idx]
 
 
