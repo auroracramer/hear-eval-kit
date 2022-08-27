@@ -1195,7 +1195,7 @@ class SplitMemmapDataset(Dataset):
             if self.in_memory:
                 embeddings = self.embeddings[idx_list, ...]
             else:
-                embeddings = torch.from_numpy(self.embeddings[idx_list, ...])
+                embeddings = torch.tensor(self.embeddings[idx_list, ...])
             y = self.y[idx_list, ...]
 
             emb_ndimm1 = embeddings.ndim - 1
@@ -1219,7 +1219,7 @@ class SplitMemmapDataset(Dataset):
             if self.in_memory:
                 embeddings = self.embeddings[idx]
             else:
-                embeddings = torch.from_numpy(self.embeddings[idx])
+                embeddings = torch.tensor(self.embeddings[idx])
             return self.embeddings[idx], self.y[idx], self.metadata[idx]
 
 
