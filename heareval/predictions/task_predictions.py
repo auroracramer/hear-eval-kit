@@ -877,7 +877,7 @@ class EventPredictionModel(AbstractPredictionModel):
             prediction = _prediction[ex_idx_list, seq_idx_list, ...]
             prediction_logit = raw_prediction_logit[ex_idx_list, seq_idx_list, ...]
 
-            del _prediction, _filename, _timestamp_lists, _nseq, _chunk_idx
+            _prediction = _filename = _timestamp_lists = _nseq = _chunk_idx = None
         else:
             keys = ["target", "prediction", "prediction_logit", "filename", "timestamp"]
             flat_outputs = self._flatten_batched_outputs(
@@ -898,7 +898,7 @@ class EventPredictionModel(AbstractPredictionModel):
             prog_bar=True,
             logger=True,
         )
-        del raw_prediction_logit, raw_target
+        raw_prediction_logit = raw_target = None
 
         epoch = self.current_epoch
         if name == "val":
