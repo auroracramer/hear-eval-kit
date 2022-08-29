@@ -1338,6 +1338,7 @@ def create_events_from_prediction(
                                 activity,
                                 spatial,
                                 threshold_multitrack_unify,
+                                spatial_projection=spatial_projection,
                             )
                         else:
                             spatial_list = [spatial]
@@ -1352,10 +1353,10 @@ def create_events_from_prediction(
                             }
 
                             # Convert Cartesian to spherical (in degrees)
-                            if spatial_projection in ("unit_xy_disc"):
+                            if spatial_projection in ("unit_xy_disc",):
                                 x, y = track_doa
                                 event["azimuth"] = np.rad2deg(np.arctan2(y, x))
-                            elif spatial_projection in ("unit_yz_disc"):
+                            elif spatial_projection in ("unit_yz_disc",):
                                 y, z = track_doa
                                 event["elevation"] = np.rad2deg(np.arccos(z / np.sqrt(y*y + z*z)))
                             elif not spatial_projection or spatial_projection in ("unit_sphere", "none"):

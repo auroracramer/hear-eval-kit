@@ -347,7 +347,14 @@ def pairwise_determine_similar_location(sed, doa, thresh_unify):
     return (dists > thresh_unify) * sed_mask
 
 
-def get_merged_multitrack_seld_events(sed_pred, doa_pred, thresh_unify):
+def get_merged_multitrack_seld_events(sed_pred, doa_pred, thresh_unify, spatial_projection=None):
+    if spatial_projection == "unit_xy_disc":
+        # Add a dummy z dimension
+        doa_pred = np.pad(doa_pred, ((0, 0), (0, 1)))
+    elif spatial_projection == "unit_yz_disc":
+        # Add a dummy x dimension
+        doa_pred = np.pad(doa_pred, ((0, 0), (1, 0)))
+
     if sed_pred.shape[0] == doa_pred.shape[0] == 3:
         # If 3 tracks, use the hard-coded version in case its faster
         return get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify)
