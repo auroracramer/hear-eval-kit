@@ -841,6 +841,10 @@ class EventPredictionModel(AbstractPredictionModel):
                 flat_outputs[key]
                 for key in keys
             )
+            # Convert to numpy to avoid memory access issues
+            _timestamp_lists = _timestamp_lists.detach().cpu().numpy()
+            _nseq = _nseq.detach().cpu().numpy()
+            _chunk_idx = _chunk_idx.detach().cpu().numpy()
 
             assert raw_target.shape[1] == _prediction.shape[1]
 
