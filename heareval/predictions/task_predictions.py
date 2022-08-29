@@ -864,7 +864,7 @@ class EventPredictionModel(AbstractPredictionModel):
                 lidx_order = np.argsort(file_chunk_idx_list)
                 
                 for lidx in lidx_order:
-                    chunk_timestamps = file_timestamp_lists[lidx].detach().cpu().tolist()
+                    chunk_timestamps = file_timestamp_lists[lidx]
                     chunk_ex_idx = int(file_ex_idx_list[lidx])
                     chunk_nseq = int(file_chunk_nseq_list[lidx])
                     for chunk_seq_idx in range(chunk_nseq):
