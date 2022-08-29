@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import sed_eval
 import torch
+import warnings
 from sklearn.metrics import average_precision_score, roc_auc_score
 from scipy import stats
 from heareval.seld import SELDMetrics, segment_labels
@@ -493,6 +494,10 @@ class HorizontalRegionIoUScore(ScoreFunction):
                 for label, target_spatial in zip(frame_target_label_list, frame_target_spatial_list):
                     prediction_regions = pred_dict[label][frame_idx] # also a set
                     target_regions = set(target_spatial)
+                    assert target_regions, (
+                        f"Active region set for {label} (frame={frame_idx}) "
+                        f"should be non-empty when included"
+                    )
                     iou = self.compute_iou(prediction_regions, target_regions)
                     classwise_frame_iou_lists[label].append(iou)
                     
@@ -519,17 +524,31 @@ class HorizontalRegionIoUScore(ScoreFunction):
                             iou = 1.0 if not pred_dict[label][frame_idx] else 0.0
                         classwise_frame_iou_lists[label].append(iou)
 
+            file_iou_list = []
             for label, iou_list in classwise_frame_iou_lists.items():
-                classwise_iou_scores[label].append(np.mean(iou_list))
+                # Append individual IoUs to compute file micro IoU score
+                file_iou_list += iou_list
 
-            file_iou_micro_score = np.mean([
-                iou
-                for iou_list in classwise_frame_iou_lists.values()
-                for iou in iou_list
-            ])
-            iou_micro_scores.append(file_iou_micro_score)
+                # Append mean IoU for classes with IoU scores for this file
+                # to overall class IoU list
+                if iou_list:
+                    classwise_iou_scores[label].append(np.mean(iou_list))
+                # skip adding mean IoU for labels not present in this file
+
+            if file_iou_list:
+                # Compute mean IoU for all IoU scores available in this file
+                file_iou_micro_score = np.mean(file_iou_list)
+                # Add file IoU to micro_scores
+                iou_micro_scores.append(file_iou_micro_score)
+            warnings.warn(
+                f"No IoU scores computed for {filename}"
+            )
+            # skip files that don't contain any events
 
         iou_micro = np.mean(iou_micro_scores)
+        # Right now we're not checking if iou_list is empty because we expect
+        # that there is at least one example for each class, so getting a NaN
+        # should mean that 
         iou_macro = np.mean([
             np.mean(iou_list)
             for iou_list in classwise_iou_scores.values()
