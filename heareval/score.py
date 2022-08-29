@@ -540,10 +540,11 @@ class HorizontalRegionIoUScore(ScoreFunction):
                 file_iou_micro_score = np.mean(file_iou_list)
                 # Add file IoU to micro_scores
                 iou_micro_scores.append(file_iou_micro_score)
-            warnings.warn(
-                f"No IoU scores computed for {filename}"
-            )
-            # skip files that don't contain any events
+            else:
+                # skip files that don't contain any events
+                warnings.warn(
+                    f"No IoU scores computed for {filename}"
+                )
 
         iou_micro = np.mean(iou_micro_scores)
         # Right now we're not checking if iou_list is empty because we expect
