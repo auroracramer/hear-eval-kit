@@ -487,10 +487,10 @@ class HorizontalRegionIoUScore(ScoreFunction):
             )
 
             classwise_frame_iou_lists = {label: [] for label in self.label_to_idx.keys()}
-            for frame_idx, (target_label_list, target_spatial_list) in enumerate(zip(target_label_list, target_spatial_list)):
+            for frame_idx, (frame_target_label_list, frame_target_spatial_list) in enumerate(zip(target_label_list, target_spatial_list)):
 
                 # Compute IoU for non-empty frames in each class
-                for label, target_spatial in zip(target_label_list, target_spatial_list):
+                for label, target_spatial in zip(frame_target_label_list, frame_target_spatial_list):
                     prediction_regions = pred_dict[label][frame_idx] # also a set
                     target_regions = set(target_spatial)
                     iou = self.compute_iou(prediction_regions, target_regions)
@@ -498,7 +498,7 @@ class HorizontalRegionIoUScore(ScoreFunction):
                     
                 if self.include_empty:
                     # Compute IoU for empty frames
-                    active_target_labels = set(target_label_list)
+                    active_target_labels = set(frame_target_label_list)
                     inactive_target_labels = set(
                         label for label in self.label_to_idx.keys()
                         if label not in active_target_labels
