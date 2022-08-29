@@ -914,8 +914,12 @@ class EventPredictionModel(AbstractPredictionModel):
         # print("\n\n\n", epoch)
 
         if name == "test" or self.use_scoring_for_early_stopping:
-            file_timestamps = {}
+            target = target.detach().cpu().numpy()
+            prediction = prediction.detach().cpu().numpy()
+            prediction_logit = prediction_logit.detach().cpu().numpy()
             timestamp = timestamp.detach().cpu().numpy()
+
+            file_timestamps = {}
             for fname, group in groupby(zip_equal(filename, timestamp), key=lambda x: x[0]):
                 slug = Path(fname).name
                 file_timestamps[slug] = sorted([ts for _, ts in group])
@@ -972,9 +976,6 @@ class EventPredictionModel(AbstractPredictionModel):
 
             if name == "test":
                 # Cache all predictions for later serialization
-                target = target.detach().cpu()
-                prediction = prediction.detach().cpu()
-                prediction_logit = prediction_logit.detach().cpu()
                 self.save_test_predictions(
                     {
                         "target": target,
@@ -1228,7 +1229,7 @@ class SplitMemmapDataset(Dataset):
 
 
 def create_events_from_prediction(
-    prediction_dict: Dict[float, torch.Tensor],
+    prediction_dict: Dict[float, np.ndarray],
     idx_to_label: Dict[int, str],
     prediction_type: str,
     threshold: float = 0.5,
@@ -1268,7 +1269,7 @@ def create_events_from_prediction(
     if prediction_type == "seld":
         spatial_predictions = np.stack(
             [
-                prediction_dict[t].detach().cpu().numpy()
+                prediction_dict[t]
                 for t in timestamps
             ]
         )
@@ -1276,7 +1277,7 @@ def create_events_from_prediction(
     elif prediction_type == "avoseld_multiregion":
         spatial_predictions = np.stack(
             [
-                prediction_dict[t].detach().cpu().numpy()
+                prediction_dict[t]
                 for t in timestamps
             ]
         )
@@ -1285,7 +1286,7 @@ def create_events_from_prediction(
     else:
         class_predictions = np.stack(
             [
-                prediction_dict[t].detach().cpu().numpy()
+                prediction_dict[t]
                 for t in timestamps
             ]
         )
@@ -1397,9 +1398,9 @@ def create_events_from_prediction(
 
 
 def get_events_for_all_files(
-    predictions: torch.Tensor,
+    predictions: np.ndarray,
     filenames: List[str],
-    timestamps: torch.Tensor,
+    timestamps: np.ndarray,
     idx_to_label: Dict[int, str],
     prediction_type: str,
     postprocessing_grid: Dict[str, List[float]],
@@ -1443,7 +1444,7 @@ def get_events_for_all_files(
     # timestamps are in sorted order. But this makes sure of it.
     assert predictions.shape[0] == len(filenames)
     assert predictions.shape[0] == len(timestamps)
-    event_files: Dict[str, Dict[float, torch.Tensor]] = {}
+    event_files: Dict[str, Dict[float, np.ndarray]] = {}
     for i, (filename, timestamp) in enumerate(zip_equal(filenames, timestamps)):
         slug = Path(filename).name
 
