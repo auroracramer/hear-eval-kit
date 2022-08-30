@@ -52,6 +52,7 @@ from sklearn.model_selection import ParameterGrid
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from tqdm.auto import tqdm
 from more_itertools import zip_equal
+from pympler import muppy, summary
 
 from heareval.score import (
     ScoreFunction,
@@ -628,11 +629,16 @@ class AbstractPredictionModel(pl.LightningModule):
         """
         raise NotImplementedError("Implement this in children")
 
+    def training_epoch_end(self, outputs: List[Dict[str, List[Any]]]):
+        summary.print_(summary.summarize(muppy.get_objects()))
+
     def validation_epoch_end(self, outputs: List[Dict[str, List[Any]]]):
         self._score_epoch_end("val", outputs)
+        summary.print_(summary.summarize(muppy.get_objects()))
 
     def test_epoch_end(self, outputs: List[Dict[str, List[Any]]]):
         self._score_epoch_end("test", outputs)
+        summary.print_(summary.summarize(muppy.get_objects()))
 
     def _flatten_batched_outputs(
         self,
