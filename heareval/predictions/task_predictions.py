@@ -564,7 +564,7 @@ class AbstractPredictionModel(pl.LightningModule):
         y_hat = self.predictor.forward_loss_compatible(x)
         loss = self.predictor.loss(y_hat, y)
         # Logging to TensorBoard by default
-        self.log("train_loss", loss)
+        self.log("train_loss", loss.detach())
         return loss
 
     def _step(self, batch, batch_idx):
@@ -702,31 +702,34 @@ class ScenePredictionModel(AbstractPredictionModel):
         target, prediction, prediction_logit = (
             flat_outputs[key] for key in ["target", "prediction", "prediction_logit"]
         )
+        # Help out garbage collector
+        flat_outputs = None
 
         self.log(
             f"{name}_loss",
-            self.predictor.loss(prediction_logit, target),
+            self.predictor.loss(prediction_logit, target).detach(),
             prog_bar=True,
             logger=True,
         )
+        if name == "test" or self.use_scoring_for_early_stopping:
+            target = target.detach().cpu().numpy()
+            prediction = prediction.detach().cpu().numpy()
+            prediction_logit = prediction_logit.detach().numpy()
 
         if name == "test":
             # Cache all predictions for later serialization
             self.save_test_predictions(
                 {
-                    "target": target.detach().cpu(),
-                    "prediction": prediction.detach().cpu(),
-                    "prediction_logit": prediction_logit.detach().cpu(),
+                    "target": target,
+                    "prediction": prediction,
+                    "prediction_logit": prediction_logit,
                 }
             )
 
         if name == "test" or self.use_scoring_for_early_stopping:
             self.log_scores(
                 name,
-                score_args=(
-                    prediction.detach().cpu().numpy(),
-                    target.detach().cpu().numpy(),
-                ),
+                score_args=(prediction, target),
             )
 
 
@@ -841,6 +844,9 @@ class EventPredictionModel(AbstractPredictionModel):
                 flat_outputs[key]
                 for key in keys
             )
+            # Help out garbage collection
+            flat_outputs = None
+
             # Convert to numpy to avoid memory access issues
             _timestamp_lists = _timestamp_lists.detach().cpu().numpy()
             _nseq = _nseq.detach().cpu().numpy()
@@ -876,7 +882,7 @@ class EventPredictionModel(AbstractPredictionModel):
                         ex_idx_list.append(chunk_ex_idx)
                         seq_idx_list.append(chunk_seq_idx)
 
-            timestamp = torch.tensor(timestamp)
+            timestamp = np.array(timestamp)
             target = raw_target[ex_idx_list, seq_idx_list, ...]
             prediction = _prediction[ex_idx_list, seq_idx_list, ...]
             prediction_logit = raw_prediction_logit[ex_idx_list, seq_idx_list, ...]
@@ -889,16 +895,20 @@ class EventPredictionModel(AbstractPredictionModel):
                 # This is a list of string, not tensor, so we don't need to stack it
                 dont_stack=["filename"],
             )
+
             target, prediction, prediction_logit, filename, timestamp = (
                 flat_outputs[key]
                 for key in keys
             )
+            # Help out garbage collection
+            flat_outputs = None
+
             raw_target = target
             raw_prediction_logit = prediction_logit
 
         self.log(
             f"{name}_loss",
-            self.predictor.loss(raw_prediction_logit, raw_target),
+            self.predictor.loss(raw_prediction_logit, raw_target).detach(),
             prog_bar=True,
             logger=True,
         )
@@ -917,7 +927,8 @@ class EventPredictionModel(AbstractPredictionModel):
             target = target.detach().cpu().numpy()
             prediction = prediction.detach().cpu().numpy()
             prediction_logit = prediction_logit.detach().cpu().numpy()
-            timestamp = timestamp.detach().cpu().numpy()
+            if isinstance(torch.Tensor):
+                timestamp = timestamp.detach().cpu().numpy()
 
             file_timestamps = {}
             for fname, group in groupby(zip_equal(filename, timestamp), key=lambda x: x[0]):
