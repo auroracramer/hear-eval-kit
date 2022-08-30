@@ -204,7 +204,6 @@ class OneHotToCrossEntropyLoss(pl.LightningModule):
         return self.loss(y_hat, y)
 
 
-@profile
 def get_mask_from_nseq(X: torch.tensor, nseq: torch.Tensor, device: Any = None):
     nbatch, nframes, = X.shape[:2]
     assert nseq.ndim == 1
@@ -637,7 +636,6 @@ class AbstractPredictionModel(pl.LightningModule):
     def test_epoch_end(self, outputs: List[Dict[str, List[Any]]]):
         self._score_epoch_end("test", outputs)
 
-    @profile
     def _flatten_batched_outputs(
         self,
         outputs,  #: Union[torch.Tensor, List[str]],
