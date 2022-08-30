@@ -348,16 +348,9 @@ def pairwise_determine_similar_location(sed, doa, thresh_unify):
 
 
 def get_merged_multitrack_seld_events(sed_pred, doa_pred, thresh_unify, spatial_projection=None):
-    if spatial_projection == "unit_xy_disc":
-        # Add a dummy z dimension
-        doa_pred = np.pad(doa_pred, ((0, 0), (0, 1)))
-    elif spatial_projection == "unit_yz_disc":
-        # Add a dummy x dimension
-        doa_pred = np.pad(doa_pred, ((0, 0), (1, 0)))
-
     if sed_pred.shape[0] == doa_pred.shape[0] == 3:
         # If 3 tracks, use the hard-coded version in case its faster
-        return get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify)
+        return get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify, spatial_projection=spatial_projection)
     output = []
     merge_matrix = pairwise_determine_similar_location(sed_pred, doa_pred, thresh_unify)
     num_merges, merge_labels = connected_components(csgraph=csr_matrix(merge_matrix))
@@ -379,17 +372,27 @@ def determine_similar_location_3track(sed_pred0, sed_pred1, doa_pred0, doa_pred1
         return 0
 
 
-def get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify):
+def get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify, spatial_projection=None):
     # https://github.com/sharathadavanne/seld-dcase2022/search?q=unify#L103
+
+    if spatial_projection == "unit_xy_disc":
+        # Add a dummy z dimension
+        _doa_pred = np.pad(doa_pred, ((0, 0), (0, 1)))
+    elif spatial_projection == "unit_yz_disc":
+        # Add a dummy x dimension
+        _doa_pred = np.pad(doa_pred, ((0, 0), (1, 0)))
+    else:
+        _doa_pred = doa_pred
+
     output = []
     flag_0sim1 = determine_similar_location_3track(
-        sed_pred[0], sed_pred[1], doa_pred[0], doa_pred[1], thresh_unify
+        sed_pred[0], sed_pred[1], _doa_pred[0], _doa_pred[1], thresh_unify
     )
     flag_1sim2 = determine_similar_location_3track(
-        sed_pred[1], sed_pred[2], doa_pred[1], doa_pred[2], thresh_unify
+        sed_pred[1], sed_pred[2], _doa_pred[1], _doa_pred[2], thresh_unify
     )
     flag_2sim0 = determine_similar_location_3track(
-        sed_pred[1], sed_pred[2], doa_pred[1], doa_pred[2], thresh_unify
+        sed_pred[1], sed_pred[2], _doa_pred[1], _doa_pred[2], thresh_unify
     )
     # unify or not unify according to flag
     if flag_0sim1 + flag_1sim2 + flag_2sim0 == 0:
