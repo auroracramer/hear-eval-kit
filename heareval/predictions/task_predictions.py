@@ -52,7 +52,7 @@ from sklearn.model_selection import ParameterGrid
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from tqdm.auto import tqdm
 from more_itertools import zip_equal
-from pympler import muppy, summary
+from memory_profiler import profile
 
 from heareval.score import (
     ScoreFunction,
@@ -73,6 +73,7 @@ TASK_SPECIFIC_PARAM_GRID = {
 }
 
 class BatchNorm1dSeq(torch.nn.BatchNorm1d):
+    @profile
     def forward(self, x: torch.Tensor):
         # BatchNorm1d expects second dimension to be features, so swap it with
         # the sequence dimension for applying batch norm and swap back
@@ -195,6 +196,7 @@ class OneHotToCrossEntropyLoss(pl.LightningModule):
         super().__init__()
         self.loss = torch.nn.CrossEntropyLoss()
 
+    @profile
     def forward(self, y_hat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         # One and only one label per class
         assert torch.all(
@@ -204,6 +206,7 @@ class OneHotToCrossEntropyLoss(pl.LightningModule):
         return self.loss(y_hat, y)
 
 
+@profile
 def get_mask_from_nseq(X: torch.tensor, nseq: torch.Tensor, device: Any = None):
     nbatch, nframes, = X.shape[:2]
     assert nseq.ndim == 1
@@ -237,6 +240,7 @@ class ADPIT(pl.LightningModule):
         )
         self.base_loss = base_loss
 
+    @profile
     def compute_base_loss(self, x: torch.Tensor, y: torch.Tensor, mask: Optional[torch.Tensor] = None):
         loss = self.base_loss(x, y)
         if self.process_sequence:
@@ -248,6 +252,7 @@ class ADPIT(pl.LightningModule):
         else:
             return loss
 
+    @profile
     def forward(self, pred: torch.Tensor, target: torch.Tensor, nseq: Optional[torch.Tensor] = None) -> torch.Tensor:
         # pred:   (nbatch, nframes, nlabels, ntracks, nspatial)
         # target: (nbatch, nframes, nlabels, ntracks_adpit, nspatial + 1)
@@ -466,6 +471,7 @@ class FullyConnectedPrediction(torch.nn.Module):
 
         return pred_shape
 
+    @profile
     def forward_loss_compatible(self, x: torch.Tensor) -> torch.Tensor:
         x = self.hidden(x)
         x = self.projection(x)
@@ -473,11 +479,13 @@ class FullyConnectedPrediction(torch.nn.Module):
             x = self.reshape(x)
         return x
 
+    @profile
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.forward_loss_compatible(x)
         x = self.activation(x)
         return x
 
+    @profile
     def compute_loss(self, pred: torch.Tensor, target: torch.Tensor, nseq: Optional[torch.Tensor] = None) -> torch.Tensor:
         if self.process_sequence and nseq is not None:
             if isinstance(self.loss, ADPIT):
@@ -558,6 +566,7 @@ class AbstractPredictionModel(pl.LightningModule):
         x = self.predictor(x)
         return x
 
+    @profile
     def training_step(self, batch, batch_idx):
         # training_step defined the train loop.
         # It is independent of forward
@@ -568,6 +577,7 @@ class AbstractPredictionModel(pl.LightningModule):
         self.log("train_loss", loss.detach())
         return loss
 
+    @profile
     def _step(self, batch, batch_idx):
         # -> Dict[str, Union[torch.Tensor, List(str)]]:
         x, y, metadata = batch
@@ -587,6 +597,7 @@ class AbstractPredictionModel(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         return self._step(batch, batch_idx)
 
+    @profile
     def log_scores(self, name: str, score_args, **score_kwargs):
         """Logs the metric score value for each score defined for the model"""
         assert hasattr(self, "scores"), "Scores for the model should be defined"
@@ -629,17 +640,13 @@ class AbstractPredictionModel(pl.LightningModule):
         """
         raise NotImplementedError("Implement this in children")
 
-    def training_epoch_end(self, outputs: List[Dict[str, List[Any]]]):
-        summary.print_(summary.summarize(muppy.get_objects()))
-
     def validation_epoch_end(self, outputs: List[Dict[str, List[Any]]]):
         self._score_epoch_end("val", outputs)
-        summary.print_(summary.summarize(muppy.get_objects()))
 
     def test_epoch_end(self, outputs: List[Dict[str, List[Any]]]):
         self._score_epoch_end("test", outputs)
-        summary.print_(summary.summarize(muppy.get_objects()))
 
+    @profile
     def _flatten_batched_outputs(
         self,
         outputs,  #: Union[torch.Tensor, List[str]],
@@ -701,6 +708,7 @@ class ScenePredictionModel(AbstractPredictionModel):
         )
         self.save_hyperparameters(ignore="test_predictions_path")
 
+    @profile
     def _score_epoch_end(self, name: str, outputs: List[Dict[str, List[Any]]]):
         flat_outputs = self._flatten_batched_outputs(
             outputs, keys=["target", "prediction", "prediction_logit"],
@@ -791,6 +799,7 @@ class EventPredictionModel(AbstractPredictionModel):
         self.ntracks = ntracks
         self.include_seq_dim = bool(conf.get("process_sequence"))
 
+    @profile
     def training_step(self, batch, batch_idx):
         # training_step defined the train loop.
         # It is independent of forward
@@ -805,6 +814,7 @@ class EventPredictionModel(AbstractPredictionModel):
         self.log("train_loss", loss)
         return loss
 
+    @profile
     def _step(self, batch, batch_idx):
         # -> Dict[str, Union[torch.Tensor, List(str)]]:
         if self.include_seq_dim:
@@ -824,6 +834,7 @@ class EventPredictionModel(AbstractPredictionModel):
         # https://stackoverflow.com/questions/38987/how-do-i-merge-two-dictionaries-in-a-single-expression-taking-union-of-dictiona
         return {**z, **metadata}
 
+    @profile
     def epoch_best_postprocessing_or_default(
         self, epoch: int
     ) -> Tuple[Tuple[str, Any], ...]:
@@ -835,6 +846,7 @@ class EventPredictionModel(AbstractPredictionModel):
             assert len(postprocessing_confs) == 1
             return tuple(postprocessing_confs[0].items())
 
+    @profile
     def _score_epoch_end(self, name: str, outputs: List[Dict[str, List[Any]]]):
         if self.include_seq_dim:
             keys = [
@@ -1210,6 +1222,7 @@ class SplitMemmapDataset(Dataset):
         else:
             return self.dim[0]
 
+    @profile
     def __getitem__(self, idx) -> Union[Tuple[torch.Tensor, torch.Tensor, Dict[str, Any]], Tuple[torch.Tensor, torch.Tensor, int, Dict[str, Any]]]:
         if self.include_seq_dim:
             idx_list = self.ex_idx_lists[idx]
@@ -1245,6 +1258,7 @@ class SplitMemmapDataset(Dataset):
             return self.embeddings[idx], self.y[idx], self.metadata[idx]
 
 
+@profile
 def create_events_from_prediction(
     prediction_dict: Dict[float, np.ndarray],
     idx_to_label: Dict[int, str],
@@ -1414,6 +1428,7 @@ def create_events_from_prediction(
     return events
 
 
+@profile
 def get_events_for_all_files(
     predictions: np.ndarray,
     filenames: List[str],
@@ -1689,6 +1704,7 @@ class GridPointResult:
         )
 
 
+@profile
 def task_predictions_train(
     embedding_path: Path,
     embedding_size: int,
@@ -2091,6 +2107,7 @@ def print_scores(
         print(f"Grid Point Summary: {g}")
 
 
+@profile
 def task_predictions(
     embedding_path: Path,
     embedding_size: int,
