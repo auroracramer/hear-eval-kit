@@ -73,7 +73,6 @@ TASK_SPECIFIC_PARAM_GRID = {
 }
 
 class BatchNorm1dSeq(torch.nn.BatchNorm1d):
-    @profile
     def forward(self, x: torch.Tensor):
         # BatchNorm1d expects second dimension to be features, so swap it with
         # the sequence dimension for applying batch norm and swap back
@@ -196,7 +195,6 @@ class OneHotToCrossEntropyLoss(pl.LightningModule):
         super().__init__()
         self.loss = torch.nn.CrossEntropyLoss()
 
-    @profile
     def forward(self, y_hat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         # One and only one label per class
         assert torch.all(
@@ -240,7 +238,6 @@ class ADPIT(pl.LightningModule):
         )
         self.base_loss = base_loss
 
-    @profile
     def compute_base_loss(self, x: torch.Tensor, y: torch.Tensor, mask: Optional[torch.Tensor] = None):
         loss = self.base_loss(x, y)
         if self.process_sequence:
@@ -252,7 +249,6 @@ class ADPIT(pl.LightningModule):
         else:
             return loss
 
-    @profile
     def forward(self, pred: torch.Tensor, target: torch.Tensor, nseq: Optional[torch.Tensor] = None) -> torch.Tensor:
         # pred:   (nbatch, nframes, nlabels, ntracks, nspatial)
         # target: (nbatch, nframes, nlabels, ntracks_adpit, nspatial + 1)
@@ -471,7 +467,6 @@ class FullyConnectedPrediction(torch.nn.Module):
 
         return pred_shape
 
-    @profile
     def forward_loss_compatible(self, x: torch.Tensor) -> torch.Tensor:
         x = self.hidden(x)
         x = self.projection(x)
@@ -479,13 +474,11 @@ class FullyConnectedPrediction(torch.nn.Module):
             x = self.reshape(x)
         return x
 
-    @profile
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.forward_loss_compatible(x)
         x = self.activation(x)
         return x
 
-    @profile
     def compute_loss(self, pred: torch.Tensor, target: torch.Tensor, nseq: Optional[torch.Tensor] = None) -> torch.Tensor:
         if self.process_sequence and nseq is not None:
             if isinstance(self.loss, ADPIT):
@@ -566,7 +559,6 @@ class AbstractPredictionModel(pl.LightningModule):
         x = self.predictor(x)
         return x
 
-    @profile
     def training_step(self, batch, batch_idx):
         # training_step defined the train loop.
         # It is independent of forward
@@ -577,7 +569,6 @@ class AbstractPredictionModel(pl.LightningModule):
         self.log("train_loss", loss.detach())
         return loss
 
-    @profile
     def _step(self, batch, batch_idx):
         # -> Dict[str, Union[torch.Tensor, List(str)]]:
         x, y, metadata = batch
@@ -799,7 +790,6 @@ class EventPredictionModel(AbstractPredictionModel):
         self.ntracks = ntracks
         self.include_seq_dim = bool(conf.get("process_sequence"))
 
-    @profile
     def training_step(self, batch, batch_idx):
         # training_step defined the train loop.
         # It is independent of forward
@@ -814,7 +804,6 @@ class EventPredictionModel(AbstractPredictionModel):
         self.log("train_loss", loss)
         return loss
 
-    @profile
     def _step(self, batch, batch_idx):
         # -> Dict[str, Union[torch.Tensor, List(str)]]:
         if self.include_seq_dim:
@@ -1222,7 +1211,6 @@ class SplitMemmapDataset(Dataset):
         else:
             return self.dim[0]
 
-    @profile
     def __getitem__(self, idx) -> Union[Tuple[torch.Tensor, torch.Tensor, Dict[str, Any]], Tuple[torch.Tensor, torch.Tensor, int, Dict[str, Any]]]:
         if self.include_seq_dim:
             idx_list = self.ex_idx_lists[idx]
