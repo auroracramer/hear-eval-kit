@@ -927,7 +927,7 @@ class EventPredictionModel(AbstractPredictionModel):
             target = target.detach().cpu().numpy()
             prediction = prediction.detach().cpu().numpy()
             prediction_logit = prediction_logit.detach().cpu().numpy()
-            if isinstance(torch.Tensor):
+            if isinstance(timestamp, torch.Tensor):
                 timestamp = timestamp.detach().cpu().numpy()
 
             file_timestamps = {}
