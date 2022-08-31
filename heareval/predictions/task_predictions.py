@@ -1329,9 +1329,12 @@ def create_events_from_prediction(
 
     events = []
     for label in range(class_predictions.shape[1]):
-        # Still works for multitrack :)
         for group in more_itertools.consecutive_groups(
-            np.where(class_predictions[:, label])[0]
+            np.where(
+                class_predictions[:, label] if not multitrack
+                # For multitrack consider overall label activity across tracks
+                else class_predictions[:, label].max(axis=-1)
+            )[0]
         ):
             grouptuple = tuple(group)
             assert (
