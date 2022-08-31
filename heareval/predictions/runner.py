@@ -11,7 +11,7 @@ import sys
 import time
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import click
 import torch
@@ -72,7 +72,7 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
     "--devices",
     default=1,
     help="Number of accelerator devices to use",
-    type=int,
+    type=click.INT,
 )
 @click.option(
     "--in-memory",
@@ -98,6 +98,12 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
     help="Shuffle tasks? (Default: False)",
     type=click.BOOL,
 )
+@click.option(
+    "--limit-train-batches",
+    default=0,
+    help="Number of accelerator devices to use",
+    type=click.INT,
+)
 def runner(
     task_dirs: List[str],
     grid_points: int = 8,
@@ -107,6 +113,7 @@ def runner(
     deterministic: bool = True,
     grid: str = "default",
     shuffle: bool = False,
+    limit_train_batches: Optional[Union[int, float]] = None,
 ) -> None:
 
     if shuffle:
@@ -151,6 +158,7 @@ def runner(
             deterministic=deterministic,
             grid=grid,
             logger=logger,
+            limit_train_batches=(limit_train_batches or None),
         )
         sys.stdout.flush()
         gpu_max_mem_used = gpu_max_mem.measure()

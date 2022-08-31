@@ -1708,6 +1708,7 @@ def task_predictions_train(
     devices: int,
     in_memory: bool,
     deterministic: bool,
+    limit_train_batches: Optional[Union[int, float]],
 ) -> GridPointResult:
     """
     Train a predictor for a specific task using pre-computed embeddings.
@@ -1831,6 +1832,7 @@ def task_predictions_train(
         auto_select_gpus=True,
         # profiler="simple",
         logger=logger,
+        limit_train_batches=limit_train_batches,
     )
     train_dataloader = dataloader_from_split_name(
         data_splits["train"],
@@ -2107,6 +2109,7 @@ def task_predictions(
     deterministic: bool,
     grid: str,
     logger: logging.Logger,
+    limit_train_batches: Optional[Union[int, float]],
 ):
     # By setting workers=True in seed_everything(), Lightning derives
     # unique seeds across all dataloader workers and processes
@@ -2191,6 +2194,7 @@ def task_predictions(
             devices=devices,
             in_memory=in_memory,
             deterministic=deterministic,
+            limit_train_batches=limit_train_batches,
         )
         logger.info(f" result: {grid_point_result}")
         grid_point_results.append(grid_point_result)
