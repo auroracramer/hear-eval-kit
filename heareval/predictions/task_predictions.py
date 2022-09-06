@@ -173,6 +173,15 @@ MAXGPU_PARAM_GRID.update(
     }
 )
 
+DEBUGMAXGPU_PARAM_GRID = copy.deepcopy(DEBUG_PARAM_GRID)
+DEBUGMAXGPU_PARAM_GRID.update(
+    {
+        "batch_size": [16384],
+    }
+)
+
+
+
 # These are good for dcase, change for other event-based secret tasks
 EVENT_POSTPROCESSING_GRID = {
     "median_filter_ms": [250],
@@ -2149,6 +2158,8 @@ def task_predictions(
         final_grid = copy.copy(DEBUG_PARAM_GRID)
     elif grid == "maxgpu":
         final_grid = copy.copy(MAXGPU_PARAM_GRID)
+    elif grid == "debugmaxgpu":
+        final_grid = copy.copy(DEBUGMAXGPU_PARAM_GRID)
     else:
         raise ValueError(
             f"Unknown grid type: {grid}. Please select default, fast, or faster"
