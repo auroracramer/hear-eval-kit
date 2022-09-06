@@ -488,6 +488,9 @@ def task_embeddings(
 
         # Root directory for audio files for this split
         audio_dir = task_path.joinpath(channel_format, str(embedding.sample_rate), split)
+        if not audio_dir.is_dir():
+            audio_dir = task_path.joinpath(str(embedding.sample_rate), split)
+
 
         # TODO: We might consider skipping files that already
         # have embeddings on disk, for speed.
