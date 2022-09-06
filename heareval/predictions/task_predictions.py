@@ -1765,11 +1765,11 @@ def task_predictions_train(
         # evaluation_params.postprocessing_grid. If not, the default
         # EVENT_POSTPROCESSING_GRID will be used.
         if "event_postprocessing_grid" in metadata.get("evaluation_params", {}):
-            postprocessing_grid = metadata["evaluation_params"][
-                "event_postprocessing_grid"
-            ]
+            postprocessing_grid = copy.copy(
+                metadata["evaluation_params"]["event_postprocessing_grid"]
+            )
         else:
-            postprocessing_grid = EVENT_POSTPROCESSING_GRID
+            postprocessing_grid = copy.copy(EVENT_POSTPROCESSING_GRID)
 
         if metadata["prediction_type"] in PRED_TYPE_EVENT_POSTPROCESSING_GRID:
             postprocessing_grid.update(PRED_TYPE_EVENT_POSTPROCESSING_GRID[metadata["prediction_type"]])
