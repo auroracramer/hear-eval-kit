@@ -163,6 +163,8 @@ DEBUG_PARAM_GRID.update(
         "patience": [1],
         "max_epochs": [1],
         "check_val_every_n_epoch": [1],
+        "lr": [1e-4],
+        "hidden_layers": [1],
     }
 )
 
