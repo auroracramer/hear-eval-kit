@@ -705,7 +705,7 @@ class ScenePredictionModel(AbstractPredictionModel):
         target, prediction, prediction_logit = (
             flat_outputs[key] for key in ["target", "prediction", "prediction_logit"]
         )
-        # Help out garbage collector
+        # Help out garbage collection
         flat_outputs = None
 
         self.log(
@@ -1872,6 +1872,8 @@ def task_predictions_train(
         nseqchunk=conf.get("sequence_chunk_length"),
     )
     trainer.fit(predictor, train_dataloader, valid_dataloader)
+    # Help out garbage collection
+    train_dataloader = valid_dataloader = None
     if checkpoint_callback.best_model_score is not None:
         sys.stdout.flush()
         end = time.time()
