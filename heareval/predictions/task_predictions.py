@@ -892,6 +892,7 @@ class EventPredictionModel(AbstractPredictionModel):
             prediction = _prediction[ex_idx_list, seq_idx_list, ...]
             prediction_logit = raw_prediction_logit[ex_idx_list, seq_idx_list, ...]
 
+            # Help out garbage collection
             _prediction = _filename = _timestamp_lists = _nseq = _chunk_idx = None
         else:
             keys = ["target", "prediction", "prediction_logit", "filename", "timestamp"]
@@ -917,6 +918,7 @@ class EventPredictionModel(AbstractPredictionModel):
             prog_bar=True,
             logger=True,
         )
+        # Help out garbage collection
         raw_prediction_logit = raw_target = None
 
         epoch = self.current_epoch
@@ -989,6 +991,8 @@ class EventPredictionModel(AbstractPredictionModel):
                     self.log(f"postprocessing/{k}", v, logger=True)
                 self.epoch_best_postprocessing[epoch] = best_postprocessing
             predicted_events = predicted_events_by_postprocessing[best_postprocessing]
+            # Help out garbage collection
+            score_and_postprocessing = predicted_events_by_postprocessing = None
 
             if name == "test":
                 # Cache all predictions for later serialization
@@ -1002,6 +1006,8 @@ class EventPredictionModel(AbstractPredictionModel):
                         "timestamp": timestamp,
                     }
                 )
+            # Help out garbage collection
+            target = prediction = prediction_logit = timestamp = None
 
             self.log_scores(
                 name,
