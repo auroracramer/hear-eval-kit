@@ -587,7 +587,6 @@ class AbstractPredictionModel(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         return self._step(batch, batch_idx)
 
-    @profile
     def log_scores(self, name: str, score_args, **score_kwargs):
         """Logs the metric score value for each score defined for the model"""
         assert hasattr(self, "scores"), "Scores for the model should be defined"
@@ -697,7 +696,6 @@ class ScenePredictionModel(AbstractPredictionModel):
         )
         self.save_hyperparameters(ignore="test_predictions_path")
 
-    @profile
     def _score_epoch_end(self, name: str, outputs: List[Dict[str, List[Any]]]):
         flat_outputs = self._flatten_batched_outputs(
             outputs, keys=["target", "prediction", "prediction_logit"],
@@ -821,7 +819,6 @@ class EventPredictionModel(AbstractPredictionModel):
         # https://stackoverflow.com/questions/38987/how-do-i-merge-two-dictionaries-in-a-single-expression-taking-union-of-dictiona
         return {**z, **metadata}
 
-    @profile
     def epoch_best_postprocessing_or_default(
         self, epoch: int
     ) -> Tuple[Tuple[str, Any], ...]:
@@ -833,7 +830,6 @@ class EventPredictionModel(AbstractPredictionModel):
             assert len(postprocessing_confs) == 1
             return tuple(postprocessing_confs[0].items())
 
-    @profile
     def _score_epoch_end(self, name: str, outputs: List[Dict[str, List[Any]]]):
         if self.include_seq_dim:
             keys = [
@@ -1250,7 +1246,6 @@ class SplitMemmapDataset(Dataset):
             return self.embeddings[idx], self.y[idx], self.metadata[idx]
 
 
-@profile
 def create_events_from_prediction(
     prediction_dict: Dict[float, np.ndarray],
     idx_to_label: Dict[int, str],
@@ -1423,7 +1418,6 @@ def create_events_from_prediction(
     return events
 
 
-@profile
 def get_events_for_all_files(
     predictions: np.ndarray,
     filenames: List[str],
