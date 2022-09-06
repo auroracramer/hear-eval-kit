@@ -1839,9 +1839,9 @@ def task_predictions_train(
         deterministic=deterministic,
         num_sanity_val_steps=0,
         # profiler=profiler,
-        profiler="pytorch",
+        # profiler="pytorch",
         auto_select_gpus=True,
-        # profiler="simple",
+        profiler="simple",
         logger=logger,
         limit_train_batches=limit_train_batches,
     )
