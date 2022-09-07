@@ -53,7 +53,7 @@ def label_to_binary_tensor(
     Returns:
         A float Tensor that is multi-hot binary vector
     """
-    assert bool(num_tracks) != bool(num_sublabels), (
+    assert not (num_tracks and num_sublabels), (
         "Using both multitrack and sublabel outputs are not supported"
     )
 
