@@ -427,7 +427,7 @@ class FullyConnectedPrediction(torch.nn.Module):
             self.loss = torch.nn.BCEWithLogitsLoss()
         elif prediction_type == "multiclass":
             self.activation = torch.nn.Softmax()
-            self.loss = torch.nn.OneHotToCrossEntropyLoss()
+            self.loss = OneHotToCrossEntropyLoss()
         elif prediction_type == "seld":
             if self.multitrack:
                 self.loss = ADPIT(
