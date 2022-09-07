@@ -22,6 +22,9 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from sklearn.metrics import pairwise_distances
 
+if "profile" not in __builtins__:
+    from memory_profiler import profile
+
 
 class SELDMetrics(object):
     def __init__(self, doa_threshold=20, nb_classes=11, average='macro'):
@@ -73,6 +76,7 @@ class SELDMetrics(object):
         ], 0)
         return seld_metric
 
+    @profile
     def compute_seld_scores(self):
         '''
         Collect the final SELD scores
@@ -105,6 +109,7 @@ class SELDMetrics(object):
             F, LE, LR, SELD_scr = F.mean(), LE.mean(), LR.mean(), SELD_scr.mean()
         return ER, F, LE, LR, SELD_scr, classwise_results
 
+    @profile
     def update_seld_scores(self, pred, gt):
         '''
         Implements the spatial error averaging according to equation 5 in the paper [1] (see papers in the title of the code).
@@ -279,6 +284,7 @@ def least_distance_between_gt_pred(gt_list, pred_list):
 
 
 # Adapted from https://github.com/sharathadavanne/seld-dcase2022/blob/main/cls_feature_class.py#L493
+@profile
 def segment_labels(_pred_dict, _max_frames, _nb_label_frames_1s):
     '''
         Collects class-wise sound event location information in segments of length 1s from reference dataset
@@ -372,6 +378,7 @@ def determine_similar_location_3track(sed_pred0, sed_pred1, doa_pred0, doa_pred1
         return 0
 
 
+@profile
 def get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify, spatial_projection=None):
     # https://github.com/sharathadavanne/seld-dcase2022/search?q=unify#L103
 

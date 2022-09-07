@@ -52,7 +52,9 @@ from sklearn.model_selection import ParameterGrid
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from tqdm.auto import tqdm
 from more_itertools import zip_equal
-from memory_profiler import profile
+if "profile" not in __builtins__:
+    from memory_profiler import profile
+
 
 from heareval.score import (
     ScoreFunction,
@@ -1268,6 +1270,7 @@ class SplitMemmapDataset(Dataset):
             return self.embeddings[idx], self.y[idx], self.metadata[idx]
 
 
+@profile
 def create_events_from_prediction(
     prediction_dict: Dict[float, np.ndarray],
     idx_to_label: Dict[int, str],
@@ -1330,6 +1333,7 @@ def create_events_from_prediction(
                 for t in timestamps
             ]
         )
+    prediction_dict = None
 
     # Optionally apply a median filter here to smooth out events.
     ts_diff = np.mean(np.diff(timestamps))
@@ -1721,7 +1725,6 @@ class GridPointResult:
         )
 
 
-@profile
 def task_predictions_train(
     embedding_path: Path,
     embedding_size: int,
@@ -2128,7 +2131,6 @@ def print_scores(
         print(f"Grid Point Summary: {g}")
 
 
-@profile
 def task_predictions(
     embedding_path: Path,
     embedding_size: int,
