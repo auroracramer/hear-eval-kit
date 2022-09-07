@@ -962,7 +962,10 @@ class EventPredictionModel(AbstractPredictionModel):
             )
 
             score_and_postprocessing = []
-            for postprocessing in tqdm(predicted_events_by_postprocessing):
+            for postprocessing in tqdm(
+                predicted_events_by_postprocessing,
+                desc="evaluating postprocessing grid",
+            ):
                 predicted_events = predicted_events_by_postprocessing[postprocessing]
                 primary_score_fn = self.scores[0]
                 primary_score_ret = primary_score_fn(
@@ -1071,7 +1074,12 @@ class SplitMemmapDataset(Dataset):
         )
         if in_memory:
             self.embeddings = torch.stack(
-                [torch.tensor(e) for e in tqdm(self.embeddings)]
+                [
+                    torch.tensor(e) for e in tqdm(
+                        self.embeddings,
+                        desc="loading embeddings in-memory",
+                    )
+                ]
             )
             nandim = self.embeddings.isnan().sum().tolist()
             infdim = self.embeddings.isinf().sum().tolist()
@@ -1170,7 +1178,10 @@ class SplitMemmapDataset(Dataset):
         """
         ys = []
 
-        for idx in tqdm(range(len(self.labels))):
+        for idx in tqdm(
+            range(len(self.labels)),
+            desc="loading labels",
+        ):
             labels = [
                 ((self.label_to_idx[str(label[0])],) + tuple(label[1:]))
                 if isinstance(label, (list, tuple))
@@ -1505,7 +1516,10 @@ def get_events_for_all_files(
             )
     else:
         postprocessing_confs = list(ParameterGrid(postprocessing_grid))
-        for postprocess_dict in tqdm(postprocessing_confs):
+        for postprocess_dict in tqdm(
+            postprocessing_confs,
+            desc="creating events from predictions for postprocessing grid",
+        ):
             postprocess = tuple(postprocess_dict.items())
             event_dict[postprocess] = {}
             for slug, timestamp_predictions in event_files.items():
@@ -2188,7 +2202,10 @@ def task_predictions(
     random.shuffle(confs)
 
     grid_point_results = []
-    for confi, conf in tqdm(enumerate(confs[:grid_points]), desc="grid"):
+    for confi, conf in tqdm(
+        enumerate(confs[:grid_points]),
+        desc="hyperparameter search grid",
+    ):
         # Update chosen coupled parameter configurations
         coupled_keys = [k for k in conf.keys() if k.startswith("COUPLED_")]
         for k in coupled_keys:
@@ -2229,7 +2246,10 @@ def task_predictions(
     # Train predictors for the remaining splits using the hyperparameters selected
     # from the grid search.
     split_grid_points = [best_grid_point]
-    for spliti, split in tqdm(enumerate(data_splits[1:]), desc="split"):
+    for spliti, split in tqdm(
+        enumerate(data_splits[1:]),
+        desc="training splits",
+    ):
         logger.info(f"Training split {spliti+2} of {len(data_splits)}: {split}")
         grid_point_result = task_predictions_train(
             embedding_path=embedding_path,

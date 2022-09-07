@@ -338,7 +338,7 @@ def memmap_embeddings(
     # First count the number of embeddings total
     nembeddings = 0
     ndim: int
-    for embedding_file in tqdm(embedding_files):
+    for embedding_file in tqdm(embedding_files, desc="counting embeddings"):
         assert embedding_file.exists()
         emb = np.load(embedding_file).astype(np.float32)
         if metadata["embedding_type"] == "scene":
@@ -367,7 +367,7 @@ def memmap_embeddings(
     labels = []
     filename_timestamps = []
     spatial = []
-    for embedding_file in tqdm(embedding_files):
+    for embedding_file in tqdm(embedding_files, desc="adding embeddings to memmap"):
         emb = np.load(embedding_file)
         lbl = json.load(
             open(str(embedding_file).replace("embedding.npy", "target-labels.json"))
@@ -525,7 +525,7 @@ def task_embeddings(
         if not os.path.exists(outdir):
             os.makedirs(outdir)
 
-        for audios, filenames in tqdm(dataloader):
+        for audios, filenames in tqdm(dataloader, desc="computing embeddings and targets for each file"):
             file_data_list = [split_data[file] for file in filenames]
             if metadata["embedding_type"] == "scene":
                 labels = file_data_list
