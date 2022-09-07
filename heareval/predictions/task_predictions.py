@@ -1161,7 +1161,7 @@ class SplitMemmapDataset(Dataset):
                             for filename, timestamp in filename_timestamps_list
                     ]
 
-        if not metadata:
+        if self.embedding_type != "event" or not metadata:
             self.metadata = [{}] * self.dim[0]
 
         assert len(self.labels) == self.dim[0]
