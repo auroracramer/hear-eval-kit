@@ -726,7 +726,7 @@ class ScenePredictionModel(AbstractPredictionModel):
         if name == "test" or self.use_scoring_for_early_stopping:
             target = target.detach().cpu().numpy()
             prediction = prediction.detach().cpu().numpy()
-            prediction_logit = prediction_logit.detach().numpy()
+            prediction_logit = prediction_logit.detach().cpu().numpy()
 
         if name == "test":
             # Cache all predictions for later serialization
