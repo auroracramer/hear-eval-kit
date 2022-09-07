@@ -1675,7 +1675,7 @@ class GridPointResult:
             "checkpoint_path": self.model_path,
             "test_predictions_path": predictor.test_predictions_path,
         }
-        if getattr(predictor, "epoch_best_postprocessing") is not None:
+        if getattr(predictor, "epoch_best_postprocessing", None) is not None:
             self.predictor_load_args["epoch_best_postprocessing"] = (
                 copy.deepcopy(predictor.epoch_best_postprocessing)
             )
