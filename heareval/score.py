@@ -23,6 +23,7 @@ from heareval.seld import (
     seld_eval_event_container
 )
 from heareval.labels import get_labels_for_file_timestamps
+from heareval.utils import delayed_kvpair, joblib_kvpair_fn_wrapper
 
 # Can we get away with not using DCase for every event-based evaluation??
 from dcase_util.containers import MetaDataContainer
@@ -691,14 +692,11 @@ class SELDScore(ScoreFunction):
         # Reformat event list for SELD metrics
         out_dict = dict(
             Parallel(n_jobs=workers)(
-                (
-                    filename,
-                    delayed(seld_eval_event_container)(
-                        event_list, 
-                        file_timestamps[filename],
-                        label_to_idx,
-                        nb_label_frames_1s
-                    ),
+                delayed_kvpair(filename, seld_eval_event_container)(
+                    event_list, 
+                    file_timestamps[filename],
+                    label_to_idx,
+                    nb_label_frames_1s
                 )
                 for filename, event_list in x.items()
             )

@@ -67,6 +67,7 @@ from heareval.score import (
     validate_score_return_type,
 )
 from heareval.seld import get_merged_multitrack_seld_events
+from heareval.utils import delayed_kvpair
 
 TASK_SPECIFIC_PARAM_GRID = {
     "dcase2016_task2": {
@@ -1531,16 +1532,13 @@ def get_events_for_all_files(
         # Create events for each file in parallel
         event_dict[postprocess] = dict(
             Parallel(n_jobs=workers)(
-                (
-                    slug,
-                    delayed(create_events_from_prediction)(
-                        timestamp_predictions,
-                        idx_to_label,
-                        prediction_type,
-                        spatial_projection=spatial_projection,
-                        multitrack=multitrack,
-                        **dict(postprocess)
-                    )
+                delayed_kvpair(slug, create_events_from_prediction)(
+                    timestamp_predictions,
+                    idx_to_label,
+                    prediction_type,
+                    spatial_projection=spatial_projection,
+                    multitrack=multitrack,
+                    **dict(postprocess)
                 )
                 for slug, timestamp_predictions in event_files.items()
             )
@@ -1563,7 +1561,7 @@ def get_events_for_all_files(
                             prediction_type,
                             spatial_projection=spatial_projection,
                             multitrack=multitrack,
-                            **postprocess_dict
+                            **postprocess_dict,
                         )
                     )
                     for slug, timestamp_predictions in event_files.items()
