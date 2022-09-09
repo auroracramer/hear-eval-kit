@@ -1553,16 +1553,13 @@ def get_events_for_all_files(
             # Create events for each file in parallel
             event_dict[postprocess] = dict(
                 Parallel(n_jobs=workers)(
-                    (
-                        slug,
-                        delayed(create_events_from_prediction)(
-                            timestamp_predictions,
-                            idx_to_label,
-                            prediction_type,
-                            spatial_projection=spatial_projection,
-                            multitrack=multitrack,
-                            **postprocess_dict,
-                        )
+                    delayed_kvpair(slug, create_events_from_prediction)(
+                        timestamp_predictions,
+                        idx_to_label,
+                        prediction_type,
+                        spatial_projection=spatial_projection,
+                        multitrack=multitrack,
+                        **postprocess_dict,
                     )
                     for slug, timestamp_predictions in event_files.items()
                 )
