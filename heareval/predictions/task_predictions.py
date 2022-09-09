@@ -27,7 +27,7 @@ from tempfile import mkstemp
 from collections import defaultdict
 from itertools import groupby, permutations, product
 from functools import reduce
-from operator import mul
+from operator import itemgetter, mul
 from pathlib import Path
 from typing import (
     Any, DefaultDict, Dict, List, Optional, Sequence, Tuple, Union
@@ -51,6 +51,7 @@ from scipy.ndimage import median_filter
 from sklearn.model_selection import ParameterGrid
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from tqdm.auto import tqdm
+from joblib import Parallel, delayed
 from more_itertools import zip_equal
 if "profile" not in __builtins__:
     from memory_profiler import profile
@@ -518,10 +519,12 @@ class AbstractPredictionModel(pl.LightningModule):
         nsublabels: Optional[int] = None,
         ntracks: Optional[int] = None,
         test_predictions_path: Optional[str] = None,
+        evaluation_workers: int = 1,
     ):
         super().__init__()
-        self.save_hyperparameters(conf)
+        self.save_hyperparameters(conf, ignore=["evaluation_workers"])
         self.use_scoring_for_early_stopping = use_scoring_for_early_stopping
+        self.evaluation_workers = evaluation_workers
 
         # Since we don't know how these embeddings are scaled
         self.layernorm = conf["embedding_norm"](nfeatures)
@@ -606,7 +609,11 @@ class AbstractPredictionModel(pl.LightningModule):
         end_scores = {}
         # The first score in the first `self.scores` is the optimization criterion
         for score in self.scores:
-            score_ret = score(*score_args, **score_kwargs)
+            score_ret = score(
+                *score_args,
+                workers=self.evaluation_workers,
+                **score_kwargs,
+            )
             validate_score_return_type(score_ret)
             # If the returned score is a tuple, store each subscore as separate entry
             if isinstance(score_ret, tuple):
@@ -696,6 +703,7 @@ class ScenePredictionModel(AbstractPredictionModel):
         conf: Dict,
         use_scoring_for_early_stopping: bool = True,
         test_predictions_path: Optional[str] = None,
+        evaluation_workers: int = 1,
     ):
         super().__init__(
             nfeatures=nfeatures,
@@ -706,6 +714,7 @@ class ScenePredictionModel(AbstractPredictionModel):
             conf=conf,
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
             test_predictions_path=test_predictions_path,
+            evaluation_workers=evaluation_workers,
         )
         self.save_hyperparameters(ignore="test_predictions_path")
 
@@ -771,6 +780,7 @@ class EventPredictionModel(AbstractPredictionModel):
         ntracks: Optional[int] = None,
         test_predictions_path: Optional[str] = None,
         epoch_best_postprocessing: Optional[Dict[int, Tuple[Tuple[str, Any], ...]]] = None,
+        evaluation_workers: int = 1,
     ):
         super().__init__(
             nfeatures=nfeatures,
@@ -784,6 +794,7 @@ class EventPredictionModel(AbstractPredictionModel):
             nsublabels=nsublabels,
             ntracks=ntracks,
             test_predictions_path=test_predictions_path,
+            evaluation_workers=evaluation_workers,
         )
         self.save_hyperparameters(ignore=["test_predictions_path", "epoch_best_postprocessing"])
         self.target_events = {
@@ -961,6 +972,7 @@ class EventPredictionModel(AbstractPredictionModel):
                 postprocessing_cached,
                 spatial_projection=self.spatial_projection,
                 multitrack=bool(self.ntracks),
+                workers=self.evaluation_workers,
             )
 
             score_and_postprocessing = []
@@ -975,6 +987,7 @@ class EventPredictionModel(AbstractPredictionModel):
                     predicted_events,
                     self.target_events[name],
                     file_timestamps=file_timestamps,
+                    workers=self.evaluation_workers,
                 )
                 # If the score returns a tuple of scores, the first score
                 # is used
@@ -1277,6 +1290,7 @@ def create_events_from_prediction(
     prediction_type: str,
     threshold: float = 0.5,
     median_filter_ms: float = 150,
+    spatial_median_filter_ms: Optional[float] = None,
     min_duration: float = 60.0,
     spatial_projection: Optional[str] = None,
     multitrack: bool = False,
@@ -1345,11 +1359,14 @@ def create_events_from_prediction(
                 cls_filter_shape += (1,)
             class_predictions = median_filter(class_predictions, size=cls_filter_shape)
 
-            if prediction_type in ("seld", "avoseld_multiregion"):
-                spa_filter_shape = (filter_width, 1, 1)
-                if multitrack:
-                    spa_filter_shape += (1,)
-                spatial_predictions = median_filter(spatial_predictions, size=spa_filter_shape)
+    # Optionally apply a median filter to each spatial dimension here to smooth out locations.
+    if spatial_median_filter_ms and (prediction_type in ("seld", "avoseld_multiregion")):
+        filter_width = int(round(spatial_median_filter_ms / ts_diff))
+        if filter_width:
+            spa_filter_shape = (filter_width, 1, 1)
+            if multitrack:
+                spa_filter_shape += (1,)
+            spatial_predictions = median_filter(spatial_predictions, size=spa_filter_shape)
 
     # Convert probabilities to binary vectors based on threshold
     class_predictions = (class_predictions > threshold).astype(np.int8)
@@ -1440,7 +1457,7 @@ def create_events_from_prediction(
                     events.append(event)
 
     # This is just for pretty output, not really necessary
-    events.sort(key=lambda k: k["start"])
+    events.sort(key=itemgetter("start"))
     return events
 
 
@@ -1454,6 +1471,7 @@ def get_events_for_all_files(
     postprocessing: Optional[Tuple[Tuple[str, Any], ...]] = None,
     spatial_projection: Optional[str] = None,
     multitrack: bool = False,
+    workers: int = 1,
 ) -> Dict[Tuple[Tuple[str, Any], ...], Dict[str, List[Dict[str, Union[str, float]]]]]:
     """
     Produces lists of events from a set of frame based label probabilities.
@@ -1510,14 +1528,23 @@ def get_events_for_all_files(
     ] = {}
     if postprocessing:
         postprocess = postprocessing
-        event_dict[postprocess] = {}
-        for slug, timestamp_predictions in event_files.items():
-            event_dict[postprocess][slug] = create_events_from_prediction(
-                timestamp_predictions, idx_to_label, prediction_type,
-                spatial_projection=spatial_projection,
-                multitrack=multitrack,
-                **dict(postprocess)
+        # Create events for each file in parallel
+        event_dict[postprocess] = dict(
+            Parallel(n_jobs=workers)(
+                (
+                    slug,
+                    delayed(create_events_from_prediction)(
+                        timestamp_predictions,
+                        idx_to_label,
+                        prediction_type,
+                        spatial_projection=spatial_projection,
+                        multitrack=multitrack,
+                        **dict(postprocess)
+                    )
+                )
+                for slug, timestamp_predictions in event_files.items()
             )
+        )
     else:
         postprocessing_confs = list(ParameterGrid(postprocessing_grid))
         for postprocess_dict in tqdm(
@@ -1525,14 +1552,23 @@ def get_events_for_all_files(
             desc="creating events from predictions for postprocessing grid",
         ):
             postprocess = tuple(postprocess_dict.items())
-            event_dict[postprocess] = {}
-            for slug, timestamp_predictions in event_files.items():
-                event_dict[postprocess][slug] = create_events_from_prediction(
-                    timestamp_predictions, idx_to_label, prediction_type,
-                    spatial_projection=spatial_projection,
-                    multitrack=multitrack,
-                    **postprocess_dict
+            # Create events for each file in parallel
+            event_dict[postprocess] = dict(
+                Parallel(n_jobs=workers)(
+                    (
+                        slug,
+                        delayed(create_events_from_prediction)(
+                            timestamp_predictions,
+                            idx_to_label,
+                            prediction_type,
+                            spatial_projection=spatial_projection,
+                            multitrack=multitrack,
+                            **postprocess_dict
+                        )
+                    )
+                    for slug, timestamp_predictions in event_files.items()
                 )
+            )
 
     return event_dict
 
@@ -1662,6 +1698,7 @@ class GridPointResult:
         validation_score: float,
         score_mode: str,
         conf: Dict,
+        extra_predictor_kwargs: Optional[Dict] = None,
     ):
         self.model_path = model_path
         self.epoch = epoch
@@ -1679,6 +1716,8 @@ class GridPointResult:
             "checkpoint_path": self.model_path,
             "test_predictions_path": predictor.test_predictions_path,
         }
+        if extra_predictor_kwargs:
+            self.predictor_load_args.update(extra_predictor_kwargs)
         if getattr(predictor, "epoch_best_postprocessing", None) is not None:
             self.predictor_load_args["epoch_best_postprocessing"] = (
                 copy.deepcopy(predictor.epoch_best_postprocessing)
@@ -1740,6 +1779,7 @@ def task_predictions_train(
     in_memory: bool,
     deterministic: bool,
     limit_train_batches: Optional[Union[int, float]],
+    evaluation_workers: int,
 ) -> GridPointResult:
     """
     Train a predictor for a specific task using pre-computed embeddings.
@@ -1808,6 +1848,7 @@ def task_predictions_train(
             ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
             nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
+            evaluation_workers=evaluation_workers,
         )
     elif metadata["embedding_type"] == "scene":
         predictor = ScenePredictionModel(
@@ -1818,6 +1859,7 @@ def task_predictions_train(
             scores=scores,
             conf=conf,
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
+            evaluation_workers=evaluation_workers,
         )
     else:
         raise ValueError(f"Unknown embedding_type {metadata['embedding_type']}")
@@ -1923,6 +1965,9 @@ def task_predictions_train(
             validation_score=checkpoint_callback.best_model_score.detach().cpu().item(),
             score_mode=mode,
             conf=conf,
+            extra_predictor_kwargs={
+                "evaluation_workers": evaluation_workers,
+            }
         )
     else:
         raise ValueError(
@@ -2142,6 +2187,7 @@ def task_predictions(
     grid: str,
     logger: logging.Logger,
     limit_train_batches: Optional[Union[int, float]],
+    evaluation_workers: int,
 ):
     # By setting workers=True in seed_everything(), Lightning derives
     # unique seeds across all dataloader workers and processes
@@ -2232,6 +2278,7 @@ def task_predictions(
             in_memory=in_memory,
             deterministic=deterministic,
             limit_train_batches=limit_train_batches,
+            evaluation_workers=evaluation_workers,
         )
         logger.info(f" result: {grid_point_result}")
         grid_point_results.append(grid_point_result)
@@ -2270,6 +2317,7 @@ def task_predictions(
             devices=devices,
             in_memory=in_memory,
             deterministic=deterministic,
+            evaluation_workers=evaluation_workers,
         )
         split_grid_points.append(grid_point_result)
         logger.info(

@@ -104,6 +104,12 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
     help="Number of accelerator devices to use",
     type=click.INT,
 )
+@click.option(
+    "--evaluation-workers",
+    default=1,
+    help="Number of parallel workers to use for computing evaluation results",
+    type=click.INT,
+)
 def runner(
     task_dirs: List[str],
     grid_points: int = 8,
@@ -114,6 +120,7 @@ def runner(
     grid: str = "default",
     shuffle: bool = False,
     limit_train_batches: Optional[Union[int, float]] = None,
+    evaluation_workers: int = 1,
 ) -> None:
 
     if shuffle:
@@ -159,6 +166,7 @@ def runner(
             grid=grid,
             logger=logger,
             limit_train_batches=(limit_train_batches or None),
+            evaluation_workers=evaluation_workers,
         )
         sys.stdout.flush()
         gpu_max_mem_used = gpu_max_mem.measure()

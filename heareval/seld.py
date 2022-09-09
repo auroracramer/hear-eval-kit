@@ -1,4 +1,4 @@
-### Copied from https://github.com/sharathadavanne/seld-dcase2022/blob/main/SELD_evaluation_metrics.py
+### Adapted from https://github.com/sharathadavanne/seld-dcase2022/blob/main/SELD_evaluation_metrics.py
 
 # Implements the localization and detection metrics proposed in [1] with extensions to support multi-instance of the same class from [2].
 #
@@ -17,203 +17,204 @@ import numpy as np
 import numpy.linalg as la
 
 eps = np.finfo(np.float).eps
+from bisect import bisect
 from scipy.optimize import linear_sum_assignment
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
-from sklearn.metrics import pairwise_distances
-
-if "profile" not in __builtins__:
-    from memory_profiler import profile
+from scipy.spatial.distance import pdist
 
 
-class SELDMetrics(object):
-    def __init__(self, doa_threshold=20, nb_classes=11, average='macro'):
-        '''
-            This class implements both the class-sensitive localization and location-sensitive detection metrics.
-            Additionally, based on the user input, the corresponding averaging is performed within the segment.
+def seld_early_stopping_metric(_er, _f, _le, _lr):
+    """
+    Compute early stopping metric from sed and doa errors.
 
-        :param nb_classes: Number of sound classes. In the paper, nb_classes = 11
-        :param doa_thresh: DOA threshold for location sensitive detection.
-        '''
-        self._nb_classes = nb_classes
+    :param sed_error: [error rate (0 to 1 range), f score (0 to 1 range)]
+    :param doa_error: [doa error (in degrees), frame recall (0 to 1 range)]
+    :return: early stopping metric result
+    """
+    seld_metric = np.mean([
+        _er,
+        1 - _f,
+        _le / 180,
+        1 - _lr
+    ], 0)
+    return seld_metric
 
-        # Variables for Location-senstive detection performance
-        self._TP = np.zeros(self._nb_classes)
-        self._FP = np.zeros(self._nb_classes)
-        self._FP_spatial = np.zeros(self._nb_classes)
-        self._FN = np.zeros(self._nb_classes)
 
-        self._Nref = np.zeros(self._nb_classes)
-
-        self._spatial_T = doa_threshold
-
-        self._S = 0
-        self._D = 0
-        self._I = 0
-
+def initialize_intermediate_score_dict(nb_classes):
+    return dict(
+        TP= np.zeros(nb_classes),
+        FP = np.zeros(nb_classes),
+        FP_spatial = np.zeros(nb_classes),
+        FN = np.zeros(nb_classes),
+        Nref = np.zeros(nb_classes),
+        S = 0,
+        D = 0,
+        I = 0,
         # Variables for Class-sensitive localization performance
-        self._total_DE = np.zeros(self._nb_classes)
+        total_DE = np.zeros(nb_classes),
+        DE_TP = np.zeros(nb_classes),
+        DE_FP = np.zeros(nb_classes),
+        DE_FN = np.zeros(nb_classes),
+    )
 
-        self._DE_TP = np.zeros(self._nb_classes)
-        self._DE_FP = np.zeros(self._nb_classes)
-        self._DE_FN = np.zeros(self._nb_classes)
+def accumulate_intermediate_score_dicts(intermediate_score_dict_list, nb_classes):
+    # Variables for Location-senstive detection performance
+    sd = initialize_intermediate_score_dict(nb_classes)
 
-        self._average = average
+    # Accumulate individual score dict items
+    for score_dict in intermediate_score_dict_list:
+        for k, v in score_dict.items():
+            sd[k] += v
 
-    def early_stopping_metric(self, _er, _f, _le, _lr):
-        """
-        Compute early stopping metric from sed and doa errors.
+    return sd
 
-        :param sed_error: [error rate (0 to 1 range), f score (0 to 1 range)]
-        :param doa_error: [doa error (in degrees), frame recall (0 to 1 range)]
-        :return: early stopping metric result
-        """
-        seld_metric = np.mean([
-            _er,
-            1 - _f,
-            _le / 180,
-            1 - _lr
-        ], 0)
-        return seld_metric
 
-    @profile
-    def compute_seld_scores(self):
-        '''
-        Collect the final SELD scores
+def aggregate_seld_scores(score_dict, nb_classes, average='macro'):
+    '''
+    Collect the final SELD scores
 
-        :return: returns both location-sensitive detection scores and class-sensitive localization scores
-        '''
-        ER = (self._S + self._D + self._I) / (self._Nref.sum() + eps)
-        classwise_results = []
-        if self._average == 'micro':
-            # Location-sensitive detection performance
-            F = self._TP.sum() / (eps + self._TP.sum() + self._FP_spatial.sum() + 0.5 * (self._FP.sum() + self._FN.sum()))
+    :return: returns both location-sensitive detection scores and class-sensitive localization scores
+    '''
+    # For brevity
+    sd = score_dict
 
-            # Class-sensitive localization performance
-            LE = self._total_DE.sum() / float(self._DE_TP.sum() + eps) if self._DE_TP.sum() else 180
-            LR = self._DE_TP.sum() / (eps + self._DE_TP.sum() + self._DE_FN.sum())
+    ER = (sd["S"] + sd["D"] + sd["I"]) / (sd["Nref"].sum() + eps)
 
-            SELD_scr = self.early_stopping_metric(ER, F, LE, LR)
+    classwise_results = []
+    if average == 'micro':
+        # Location-sensitive detection performance
+        F = sd["TP"].sum() / (eps + sd["TP"].sum() + sd["FP_spatial"].sum() + 0.5 * (sd["FP"].sum() + sd["FN"].sum()))
 
-        elif self._average == 'macro':
-            # Location-sensitive detection performance
-            F = self._TP / (eps + self._TP + self._FP_spatial + 0.5 * (self._FP + self._FN))
+        # Class-sensitive localization performance
+        LE = sd["total_DE"].sum() / float(sd["DE_TP"].sum() + eps) if sd["DE_TP"].sum() else 180
+        LR = sd["DE_TP"].sum() / (eps + sd["DE_TP"].sum() + sd["DE_FN"].sum())
 
-            # Class-sensitive localization performance
-            LE = self._total_DE / (self._DE_TP + eps)
-            LE[self._DE_TP==0] = 180.0
-            LR = self._DE_TP / (eps + self._DE_TP + self._DE_FN)
+        SELD_scr = self.seld_early_stopping_metric(ER, F, LE, LR)
 
-            SELD_scr = self.early_stopping_metric(np.repeat(ER, self._nb_classes), F, LE, LR)
-            classwise_results = np.array([np.repeat(ER, self._nb_classes), F, LE, LR, SELD_scr])
-            F, LE, LR, SELD_scr = F.mean(), LE.mean(), LR.mean(), SELD_scr.mean()
-        return ER, F, LE, LR, SELD_scr, classwise_results
+    elif average == 'macro':
+        # Location-sensitive detection performance
+        F = sd["TP"] / (eps + sd["TP"] + sd["FP_spatial"] + 0.5 * (sd["FP"] + sd["FN"]))
 
-    @profile
-    def update_seld_scores(self, pred, gt):
-        '''
-        Implements the spatial error averaging according to equation 5 in the paper [1] (see papers in the title of the code).
-        Adds the multitrack extensions proposed in paper [2]
+        # Class-sensitive localization performance
+        LE = sd["total_DE"] / (sd["DE_TP"] + eps)
+        LE[sd["DE_TP"] == 0] = 180.0
+        LR = sd["DE_TP"] / (eps + sd["DE_TP"] + sd["DE_FN"])
 
-        The input pred/gt can either both be Cartesian or Degrees
+        SELD_scr = seld_early_stopping_metric(np.repeat(ER, nb_classes), F, LE, LR)
+        classwise_results = np.array([np.repeat(ER, nb_classes), F, LE, LR, SELD_scr])
+        F, LE, LR, SELD_scr = F.mean(), LE.mean(), LR.mean(), SELD_scr.mean()
 
-        :param pred: dictionary containing class-wise prediction results for each N-seconds segment block
-        :param gt: dictionary containing class-wise groundtruth for each N-seconds segment block
-        '''
-        for block_cnt in range(len(gt.keys())):
-            loc_FN, loc_FP = 0, 0
-            for class_cnt in range(self._nb_classes):
-                # Counting the number of referece tracks for each class in the segment
-                nb_gt_doas = max([len(val) for val in gt[block_cnt][class_cnt][0][1]]) if class_cnt in gt[block_cnt] else None
-                nb_pred_doas = max([len(val) for val in pred[block_cnt][class_cnt][0][1]]) if class_cnt in pred[block_cnt] else None
-                if nb_gt_doas is not None:
-                    self._Nref[class_cnt] += nb_gt_doas
-                if class_cnt in gt[block_cnt] and class_cnt in pred[block_cnt]:
-                    # True positives or False positive case
+    return ER, F, LE, LR, SELD_scr, classwise_results
 
-                    # NOTE: For multiple tracks per class, associate the predicted DOAs to corresponding reference
-                    # DOA-tracks using hungarian algorithm and then compute the average spatial distance between
-                    # the associated reference-predicted tracks.
+def compute_intermediate_seld_scores(pred, gt, doa_threshold=20, nb_classes=11):
+    '''
+    Implements the spatial error averaging according to equation 5 in the paper [1] (see papers in the title of the code).
+    Adds the multitrack extensions proposed in paper [2]
 
-                    # Reference and predicted track matching
-                    matched_track_dist = {}
-                    matched_track_cnt = {}
-                    gt_ind_list = gt[block_cnt][class_cnt][0][0]
-                    pred_ind_list = pred[block_cnt][class_cnt][0][0]
-                    for gt_ind, gt_val in enumerate(gt_ind_list):
-                        if gt_val in pred_ind_list:
-                            gt_arr = np.array(gt[block_cnt][class_cnt][0][1][gt_ind])
-                            gt_ids = np.arange(len(gt_arr[:, -1])) #TODO if the reference has track IDS use here - gt_arr[:, -1]
-                            gt_doas = gt_arr[:, 1:]
+    The input pred/gt can either both be Cartesian or Degrees
 
-                            pred_ind = pred_ind_list.index(gt_val)
-                            pred_arr = np.array(pred[block_cnt][class_cnt][0][1][pred_ind])
-                            pred_doas = pred_arr[:, 1:]
+    :param pred: dictionary containing class-wise prediction results for each N-seconds segment block
+    :param gt: dictionary containing class-wise groundtruth for each N-seconds segment block
+    '''
 
-                            if gt_doas.shape[-1] == 2: # convert DOAs to radians, if the input is in degrees
-                                gt_doas = gt_doas * np.pi / 180.
-                                pred_doas = pred_doas * np.pi / 180.
+    sd = initialize_intermediate_score_dict(nb_classes)
 
-                            dist_list, row_inds, col_inds = least_distance_between_gt_pred(gt_doas, pred_doas)
+    for block_cnt in range(len(gt.keys())):
+        loc_FN, loc_FP = 0, 0
+        for class_cnt in range(nb_classes):
+            # Counting the number of referece tracks for each class in the segment
+            nb_gt_doas = max([len(val) for val in gt[block_cnt][class_cnt][0][1]]) if class_cnt in gt[block_cnt] else None
+            nb_pred_doas = max([len(val) for val in pred[block_cnt][class_cnt][0][1]]) if class_cnt in pred[block_cnt] else None
+            if nb_gt_doas is not None:
+                sd["Nref"][class_cnt] += nb_gt_doas
+            if class_cnt in gt[block_cnt] and class_cnt in pred[block_cnt]:
+                # True positives or False positive case
 
-                            # Collect the frame-wise distance between matched ref-pred DOA pairs
-                            for dist_cnt, dist_val in enumerate(dist_list):
-                                matched_gt_track = gt_ids[row_inds[dist_cnt]]
-                                if matched_gt_track not in matched_track_dist:
-                                    matched_track_dist[matched_gt_track], matched_track_cnt[matched_gt_track] = [], []
-                                matched_track_dist[matched_gt_track].append(dist_val)
-                                matched_track_cnt[matched_gt_track].append(pred_ind)
+                # NOTE: For multiple tracks per class, associate the predicted DOAs to corresponding reference
+                # DOA-tracks using hungarian algorithm and then compute the average spatial distance between
+                # the associated reference-predicted tracks.
 
-                    # Update evaluation metrics based on the distance between ref-pred tracks
-                    if len(matched_track_dist) == 0:
-                        # if no tracks are found. This occurs when the predicted DOAs are not aligned frame-wise to the reference DOAs
-                        loc_FN += nb_pred_doas
-                        self._FN[class_cnt] += nb_pred_doas
-                        self._DE_FN[class_cnt] += nb_pred_doas
-                    else:
-                        # for the associated ref-pred tracks compute the metrics
-                        for track_id in matched_track_dist:
-                            total_spatial_dist = sum(matched_track_dist[track_id])
-                            total_framewise_matching_doa = len(matched_track_cnt[track_id])
-                            avg_spatial_dist = total_spatial_dist / total_framewise_matching_doa
+                # Reference and predicted track matching
+                matched_track_dist = {}
+                matched_track_cnt = {}
+                gt_ind_list = gt[block_cnt][class_cnt][0][0]
+                pred_ind_list = pred[block_cnt][class_cnt][0][0]
+                for gt_ind, gt_val in enumerate(gt_ind_list):
+                    if gt_val in pred_ind_list:
+                        gt_arr = np.array(gt[block_cnt][class_cnt][0][1][gt_ind])
+                        gt_ids = np.arange(len(gt_arr[:, -1])) #TODO if the reference has track IDS use here - gt_arr[:, -1]
+                        gt_doas = gt_arr[:, 1:]
 
-                            # Class-sensitive localization performance
-                            self._total_DE[class_cnt] += avg_spatial_dist
-                            self._DE_TP[class_cnt] += 1
+                        pred_ind = pred_ind_list.index(gt_val)
+                        pred_arr = np.array(pred[block_cnt][class_cnt][0][1][pred_ind])
+                        pred_doas = pred_arr[:, 1:]
 
-                            # Location-sensitive detection performance
-                            if avg_spatial_dist <= self._spatial_T:
-                                self._TP[class_cnt] += 1
-                            else:
-                                loc_FP += 1
-                                self._FP_spatial[class_cnt] += 1
-                        # in the multi-instance of same class scenario, if the number of predicted tracks are greater
-                        # than reference tracks count as FP, if it less than reference count as FN
-                        if nb_pred_doas > nb_gt_doas:
-                            # False positive
-                            loc_FP += (nb_pred_doas-nb_gt_doas)
-                            self._FP[class_cnt] += (nb_pred_doas-nb_gt_doas)
-                            self._DE_FP[class_cnt] += (nb_pred_doas-nb_gt_doas)
-                        elif nb_pred_doas < nb_gt_doas:
-                            # False negative
-                            loc_FN += (nb_gt_doas-nb_pred_doas)
-                            self._FN[class_cnt] += (nb_gt_doas-nb_pred_doas)
-                            self._DE_FN[class_cnt] += (nb_gt_doas-nb_pred_doas)
-                elif class_cnt in gt[block_cnt] and class_cnt not in pred[block_cnt]:
-                    # False negative
-                    loc_FN += nb_gt_doas
-                    self._FN[class_cnt] += nb_gt_doas
-                    self._DE_FN[class_cnt] += nb_gt_doas
-                elif class_cnt not in gt[block_cnt] and class_cnt in pred[block_cnt]:
-                    # False positive
-                    loc_FP += nb_pred_doas
-                    self._FP[class_cnt] += nb_pred_doas
-                    self._DE_FP[class_cnt] += nb_pred_doas
+                        if gt_doas.shape[-1] == 2: # convert DOAs to radians, if the input is in degrees
+                            gt_doas = gt_doas * np.pi / 180.
+                            pred_doas = pred_doas * np.pi / 180.
 
-            self._S += np.minimum(loc_FP, loc_FN)
-            self._D += np.maximum(0, loc_FN - loc_FP)
-            self._I += np.maximum(0, loc_FP - loc_FN)
-        return
+                        dist_list, row_inds, col_inds = least_distance_between_gt_pred(gt_doas, pred_doas)
+
+                        # Collect the frame-wise distance between matched ref-pred DOA pairs
+                        for dist_cnt, dist_val in enumerate(dist_list):
+                            matched_gt_track = gt_ids[row_inds[dist_cnt]]
+                            if matched_gt_track not in matched_track_dist:
+                                matched_track_dist[matched_gt_track], matched_track_cnt[matched_gt_track] = [], []
+                            matched_track_dist[matched_gt_track].append(dist_val)
+                            matched_track_cnt[matched_gt_track].append(pred_ind)
+
+                # Update evaluation metrics based on the distance between ref-pred tracks
+                if len(matched_track_dist) == 0:
+                    # if no tracks are found. This occurs when the predicted DOAs are not aligned frame-wise to the reference DOAs
+                    loc_FN += nb_pred_doas
+                    sd["FN"][class_cnt] += nb_pred_doas
+                    sd["DE_FN"][class_cnt] += nb_pred_doas
+                else:
+                    # for the associated ref-pred tracks compute the metrics
+                    for track_id in matched_track_dist:
+                        total_spatial_dist = sum(matched_track_dist[track_id])
+                        total_framewise_matching_doa = len(matched_track_cnt[track_id])
+                        avg_spatial_dist = total_spatial_dist / total_framewise_matching_doa
+
+                        # Class-sensitive localization performance
+                        sd["total_DE"][class_cnt] += avg_spatial_dist
+                        sd["DE_TP"][class_cnt] += 1
+
+                        # Location-sensitive detection performance
+                        if avg_spatial_dist <= doa_threshold:
+                            sd["TP"][class_cnt] += 1
+                        else:
+                            loc_FP += 1
+                            sd["FP_spatial"][class_cnt] += 1
+                    # in the multi-instance of same class scenario, if the number of predicted tracks are greater
+                    # than reference tracks count as FP, if it less than reference count as FN
+                    if nb_pred_doas > nb_gt_doas:
+                        # False positive
+                        loc_FP += (nb_pred_doas-nb_gt_doas)
+                        sd["FP"][class_cnt] += (nb_pred_doas-nb_gt_doas)
+                        sd["DE_FP"][class_cnt] += (nb_pred_doas-nb_gt_doas)
+                    elif nb_pred_doas < nb_gt_doas:
+                        # False negative
+                        loc_FN += (nb_gt_doas-nb_pred_doas)
+                        sd["FN"][class_cnt] += (nb_gt_doas-nb_pred_doas)
+                        sd["DE_FN"][class_cnt] += (nb_gt_doas-nb_pred_doas)
+            elif class_cnt in gt[block_cnt] and class_cnt not in pred[block_cnt]:
+                # False negative
+                loc_FN += nb_gt_doas
+                sd["FN"][class_cnt] += nb_gt_doas
+                sd["DE_FN"][class_cnt] += nb_gt_doas
+            elif class_cnt not in gt[block_cnt] and class_cnt in pred[block_cnt]:
+                # False positive
+                loc_FP += nb_pred_doas
+                sd["FP"][class_cnt] += nb_pred_doas
+                sd["DE_FP"][class_cnt] += nb_pred_doas
+
+        sd["S"] += np.minimum(loc_FP, loc_FN)
+        sd["D"] += np.maximum(0, loc_FN - loc_FP)
+        sd["I"] += np.maximum(0, loc_FP - loc_FN)
+
+    return sd
 
 
 def distance_between_spherical_coordinates_rad(az1, ele1, az2, ele2):
@@ -284,7 +285,6 @@ def least_distance_between_gt_pred(gt_list, pred_list):
 
 
 # Adapted from https://github.com/sharathadavanne/seld-dcase2022/blob/main/cls_feature_class.py#L493
-@profile
 def segment_labels(_pred_dict, _max_frames, _nb_label_frames_1s):
     '''
         Collects class-wise sound event location information in segments of length 1s from reference dataset
@@ -297,6 +297,8 @@ def segment_labels(_pred_dict, _max_frames, _nb_label_frames_1s):
     #_nb_label_frames_1s = self._fs / float(self._label_hop_len)
     nb_blocks = int(np.ceil(_max_frames/float(_nb_label_frames_1s)))
     output_dict = {x: {} for x in range(nb_blocks)}
+    # Speed things up a bit by using sets to check membership
+    output_block_cnt_class_cnt_set_dict = {x: set() for x in range(nb_blocks)}
     for frame_cnt in range(0, _max_frames, _nb_label_frames_1s):
 
         # Collect class-wise information for each block
@@ -304,24 +306,31 @@ def segment_labels(_pred_dict, _max_frames, _nb_label_frames_1s):
         # Data structure supports multi-instance occurence of same class
         block_cnt = frame_cnt // _nb_label_frames_1s
         loc_dict = {}
+        # Speed things up a bit by using sets to check membership
+        class_cnt_set = set()
+        class_cnt_loc_set_dict = {}
         for audio_frame in range(frame_cnt, frame_cnt+_nb_label_frames_1s):
             if audio_frame not in _pred_dict:
                 continue
             for value in _pred_dict[audio_frame]:
                 # value = (class_idx, track_idx, azi, ele)
-                if value[0] not in loc_dict:
-                    loc_dict[value[0]] = {}
+                class_cnt = value[0]
+                if class_cnt not in class_cnt_set:
+                    loc_dict[class_cnt] = {}
+                    class_cnt_set.add(class_cnt)
+                    class_cnt_loc_set_dict[class_cnt] = set()
 
                 block_frame = audio_frame - frame_cnt
-                if block_frame not in loc_dict[value[0]]:
-                    loc_dict[value[0]][block_frame] = []
-                # loc_dict[class_idx][block_frame] = [(track_idx, azi, ele), ...]
-                loc_dict[value[0]][block_frame].append(value[1:])
+                if block_frame not in class_cnt_loc_set_dict[class_cnt]:
+                    loc_dict[class_cnt][block_frame] = []
+                # loc_dict[class_cnt][block_frame] = [(track_idx, azi, ele), ...]
+                loc_dict[class_cnt][block_frame].append(value[1:])
 
         # Update the block wise details collected above in a global structure
         for class_cnt in loc_dict:
-            if class_cnt not in output_dict[block_cnt]:
+            if class_cnt not in output_block_cnt_class_cnt_set_dict[block_cnt]:
                 output_dict[block_cnt][class_cnt] = []
+                output_block_cnt_class_cnt_set_dict[block_cnt].add(class_cnt)
 
             # keys -> block_frames
             keys = [k for k in loc_dict[class_cnt]]
@@ -332,6 +341,41 @@ def segment_labels(_pred_dict, _max_frames, _nb_label_frames_1s):
 
     return output_dict
 
+def seld_eval_event_container(event_list, timestamps, label_to_idx, nb_label_frames_1s):
+    num_frames = len(timestamps)
+    tmp_event_dict = {}
+    # Use a set to speed up membership tests
+    frame_set = set()
+    for event in event_list:
+        frame_idx = event.get(
+            "frameidx",
+            # TODO: maybe need to use intervaltree interpolation,
+            #       but for now just use bisect
+            bisect(timestamps, event["start"]) - 1
+        )
+        class_idx = label_to_idx[event["label"]]
+        track_idx = event.get("trackidx", 0)
+        azi = event.get("azimuth", 0.0)
+        ele = event.get("elevation", 0.0)
+        if frame_idx not in frame_set:
+            tmp_event_dict[frame_idx] = []
+            frame_set.add(frame_idx)
+        # Basically replicates the DCASE csv format
+        tmp_event_dict[frame_idx].append([class_idx, track_idx, azi, ele])
+
+    return segment_labels(
+        tmp_event_dict, num_frames, nb_label_frames_1s
+    )
+
+
+def triu_arr_to_symmetric_dist_matrix(triu_arr, N):
+    mat = np.zeros((N,N), dtype=triu_arr.dtype)
+    # Exclude diagonal
+    iu1, iu2 = np.triu_indices(N, k=1)
+    mat[iu1, iu2] = triu_arr
+    mat[iu2, iu1] = triu_arr
+    return mat
+
 
 def pairwise_angular_distance_between_cartesian_coordinates(V):
     """
@@ -341,21 +385,23 @@ def pairwise_angular_distance_between_cartesian_coordinates(V):
 
     :return: angular distance in degrees
     """
-    dists = pairwise_distances(V, metric='cosine')
+    dists = pdist(V, metric='cosine')
     dists = np.clip(dists, -1, 1)
-    return np.arccos(dists) * 180 / np.pi 
+    dists = np.arccos(dists) * 180 / np.pi 
+    # Convert from compressed upper triangular array to symmetric matrix
+    return triu_arr_to_symmetric_dist_matrix(dists, V.shape[0])
 
 
 def pairwise_determine_similar_location(sed, doa, thresh_unify):
     sed = (sed == 1).astype(doa.dtype)
     sed_mask = np.outer(sed, sed)
     dists = pairwise_angular_distance_between_cartesian_coordinates(doa)
-    return (dists > thresh_unify) * sed_mask
+    return (dists < thresh_unify) * sed_mask
 
 
 def get_merged_multitrack_seld_events(sed_pred, doa_pred, thresh_unify, spatial_projection=None):
     if sed_pred.shape[0] == doa_pred.shape[0] == 3:
-        # If 3 tracks, use the hard-coded version in case its faster
+        # If 3 tracks, use the hard-coded version since it's faster 
         return get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify, spatial_projection=spatial_projection)
     output = []
     merge_matrix = pairwise_determine_similar_location(sed_pred, doa_pred, thresh_unify)
@@ -378,7 +424,6 @@ def determine_similar_location_3track(sed_pred0, sed_pred1, doa_pred0, doa_pred1
         return 0
 
 
-@profile
 def get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify, spatial_projection=None):
     # https://github.com/sharathadavanne/seld-dcase2022/search?q=unify#L103
 
@@ -413,19 +458,17 @@ def get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify, s
         if flag_0sim1:
             if sed_pred[2] > 0.5:
                 output.append(doa_pred[2])
-            doa_pred_fc = (doa_pred[0] + doa_pred[1]) / 2
-            output.append(doa_pred_fc)
+            doa_pred_fc = doa_pred[(0, 1), :].mean(axis=0)
         elif flag_1sim2:
             if sed_pred[0] > 0.5:
                 output.append(doa_pred[0])
-            doa_pred_fc = (doa_pred[1] + doa_pred[2]) / 2
-            output.append(doa_pred_fc)
+            doa_pred_fc = doa_pred[(1, 2), :].mean(axis=0)
         elif flag_2sim0:
             if sed_pred[1] > 0.5:
                 output.append(doa_pred[1])
-            doa_pred_fc = (doa_pred[2] + doa_pred[0]) / 2
+            doa_pred_fc = doa_pred[(2, 0), :].mean(axis=0)
             output.append(doa_pred_fc)
     elif flag_0sim1 + flag_1sim2 + flag_2sim0 >= 2:
-        doa_pred_fc = (doa_pred[0] + doa_pred[1] + doa_pred[2]) / 3
+        doa_pred_fc = doa_pred.mean(axis=0)
         output.append(doa_pred_fc)
     return output

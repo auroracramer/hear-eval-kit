@@ -15,7 +15,13 @@ import torch
 import warnings
 from sklearn.metrics import average_precision_score, roc_auc_score
 from scipy import stats
-from heareval.seld import SELDMetrics, segment_labels
+from joblib import Parallel, delayed
+from heareval.seld import (
+    accumulate_intermediate_score_dicts,
+    aggregate_seld_scores,
+    compute_intermediate_seld_scores,
+    seld_eval_event_container
+)
 from heareval.labels import get_labels_for_file_timestamps
 
 # Can we get away with not using DCase for every event-based evaluation??
@@ -594,45 +600,54 @@ class SELDScore(ScoreFunction):
 
     @profile
     def _compute(
-        self, predictions: Dict, targets: Dict, file_timestamps: Dict,
+        self,
+        predictions: Dict,
+        targets: Dict,
+        file_timestamps: Dict,
+        workers: int = 1,
         **kwargs
     ) -> Tuple[Tuple[str, float], ...]:
-        scores = SELDMetrics(
-            doa_threshold=self.doa_threshold,
-            nb_classes=len(self.label_to_idx),
-        )
+        nb_classes = len(self.label_to_idx)
 
         # Convert predictions/targets to SELD compatible format
         predictions = self.seld_eval_event_container(
             predictions,
             file_timestamps,
             self.label_to_idx,
-            self.segment_duration_ms
+            self.segment_duration_ms,
+            workers=workers,
         )
+
         targets = self.seld_eval_event_container(
             targets,
             file_timestamps,
             self.label_to_idx,
-            self.segment_duration_ms
+            self.segment_duration_ms,
+            workers=workers,
         )
 
-        for filename in predictions:
-            scores.update_seld_scores(
-                pred=predictions[filename],
-                gt=targets[filename],
-            )
+        intermediate_score_dict = accumulate_intermediate_score_dicts(
+            Parallel(n_jobs=workers)(
+                delayed(compute_intermediate_seld_scores)(
+                    pred=predictions[filename],
+                    gt=targets[filename],
+                    doa_threshold=self.doa_threshold,
+                    nb_classes=nb_classes,
+                )
+                for filename in predictions.keys()
+            ),
+            nb_classes,
+        )
 
         # results_overall_metrics return a pretty large nested selection of scores,
         # with dicts of scores keyed on the type of scores, like f_measure, error_rate,
         # accuracy
-        # TODO: Probably need to change this
-
-        
-        scores._average = 'macro'
-        er_macro, f_macro, le_macro, lr_macro, scr_macro, _ = scores.compute_seld_scores()
-        scores._average = 'micro'
-        er_micro, f_micro, le_micro, lr_micro, scr_micro, _ = scores.compute_seld_scores()
-        # ER (seld_er), F (seld_f), LE (seld_le), LR (seld_lr), SELD_scr (seld_score), classwise_results
+        er_macro, f_macro, le_macro, lr_macro, scr_macro, _ = aggregate_seld_scores(
+            intermediate_score_dict, nb_classes, average='macro',
+        )
+        er_micro, f_micro, le_micro, lr_micro, scr_micro, _ = aggregate_seld_scores(
+            intermediate_score_dict, nb_classes, average='micro',
+        )
 
         overall_scores: Dict[str, float] = dict(
             error_rate=float(er_micro),
@@ -670,37 +685,24 @@ class SELDScore(ScoreFunction):
         file_timestamps: Dict[str, Sequence[float]],
         label_to_idx: Dict[str, int],
         segment_duration_ms: int,
+        workers: int,
     ) -> Dict:
         nb_label_frames_1s = SELDScore.get_segment_length(file_timestamps, segment_duration_ms)
         # Reformat event list for SELD metrics
-        out_dict = {}
-        for filename, event_list in x.items():
-            # ensure list is sorted
-            event_list = sorted(event_list, key=lambda v: v['start'])
-            timestamps = file_timestamps[filename]
-            num_frames = len(timestamps)
-            tmp_event_dict = {}
-            # _pred_dict[frame_idx]: List[List[str, float, float, ...]]
-            for event in event_list:
-                frame_idx = event.get("frameidx")
-                if frame_idx is None:
-                    # TODO: maybe need to use intervaltree interpolation,
-                    #       but for now just use bisect
-                    # Assumes timestamps are sorted
-                    frame_idx = bisect(timestamps, event["start"]) - 1
-                class_idx = label_to_idx[event["label"]]
-                track_idx = event.get("trackidx", 0)
-                azi = event.get("azimuth", 0.0)
-                ele = event.get("elevation", 0.0)
-                if frame_idx not in tmp_event_dict:
-                    tmp_event_dict[frame_idx] = []
-                # Basically replicates the DCASE csv format
-                tmp_event_dict[frame_idx].append([class_idx, track_idx, azi, ele])
-
-            out_dict[filename] = segment_labels(
-                tmp_event_dict, num_frames, nb_label_frames_1s
+        out_dict = dict(
+            Parallel(n_jobs=workers)(
+                (
+                    filename,
+                    delayed(seld_eval_event_container)(
+                        event_list, 
+                        file_timestamps[filename],
+                        label_to_idx,
+                        nb_label_frames_1s
+                    ),
+                )
+                for filename, event_list in x.items()
             )
-
+        )
         return out_dict
 
 
