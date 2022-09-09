@@ -23,7 +23,7 @@ from heareval.seld import (
     seld_eval_event_container
 )
 from heareval.labels import get_labels_for_file_timestamps
-from heareval.utils import delayed_kvpair, joblib_kvpair_fn_wrapper
+from heareval.utils import delayed_kvpair
 
 # Can we get away with not using DCase for every event-based evaluation??
 from dcase_util.containers import MetaDataContainer
