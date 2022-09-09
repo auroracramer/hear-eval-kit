@@ -27,8 +27,6 @@ from heareval.utils import delayed_kvpair
 
 # Can we get away with not using DCase for every event-based evaluation??
 from dcase_util.containers import MetaDataContainer
-if "profile" not in __builtins__:
-    from memory_profiler import profile
 
 
 def label_vocab_as_dict(df: pd.DataFrame, key: str, value: str) -> Dict:
@@ -599,7 +597,6 @@ class SELDScore(ScoreFunction):
         self.doa_threshold = doa_threshold
         self.segment_duration_ms = segment_duration_ms
 
-    @profile
     def _compute(
         self,
         predictions: Dict,

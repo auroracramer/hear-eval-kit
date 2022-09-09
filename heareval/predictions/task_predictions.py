@@ -53,8 +53,6 @@ from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from tqdm.auto import tqdm
 from joblib import Parallel, delayed
 from more_itertools import zip_equal
-if "profile" not in __builtins__:
-    from memory_profiler import profile
 
 
 from heareval.score import (
@@ -1284,7 +1282,6 @@ class SplitMemmapDataset(Dataset):
             return self.embeddings[idx], self.y[idx], self.metadata[idx]
 
 
-@profile
 def create_events_from_prediction(
     prediction_dict: Dict[float, np.ndarray],
     idx_to_label: Dict[int, str],
