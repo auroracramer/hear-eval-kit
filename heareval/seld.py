@@ -90,7 +90,7 @@ def aggregate_seld_scores(score_dict, nb_classes, average='macro'):
         LE = sd["total_DE"].sum() / float(sd["DE_TP"].sum() + eps) if sd["DE_TP"].sum() else 180
         LR = sd["DE_TP"].sum() / (eps + sd["DE_TP"].sum() + sd["DE_FN"].sum())
 
-        SELD_scr = self.seld_early_stopping_metric(ER, F, LE, LR)
+        SELD_scr = seld_early_stopping_metric(ER, F, LE, LR)
 
     elif average == 'macro':
         # Location-sensitive detection performance
