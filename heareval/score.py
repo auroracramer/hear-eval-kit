@@ -625,7 +625,7 @@ class SELDScore(ScoreFunction):
         )
 
         intermediate_score_dict = accumulate_intermediate_score_dicts(
-            Parallel(n_jobs=workers)(
+            Parallel(n_jobs=workers, verbose=10)(
                 delayed(compute_intermediate_seld_scores)(
                     pred=predictions[filename],
                     gt=targets[filename],
@@ -688,12 +688,12 @@ class SELDScore(ScoreFunction):
         nb_label_frames_1s = SELDScore.get_segment_length(file_timestamps, segment_duration_ms)
         # Reformat event list for SELD metrics
         out_dict = dict(
-            Parallel(n_jobs=workers)(
+            Parallel(n_jobs=workers, verbose=10)(
                 delayed_kvpair(filename, seld_eval_event_container)(
                     event_list, 
                     file_timestamps[filename],
                     label_to_idx,
-                    nb_label_frames_1s
+                    nb_label_frames_1s,
                 )
                 for filename, event_list in x.items()
             )

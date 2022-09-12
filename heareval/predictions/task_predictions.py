@@ -1528,7 +1528,7 @@ def get_events_for_all_files(
         postprocess = postprocessing
         # Create events for each file in parallel
         event_dict[postprocess] = dict(
-            Parallel(n_jobs=workers)(
+            Parallel(n_jobs=workers, verbose=10)(
                 delayed_kvpair(slug, create_events_from_prediction)(
                     timestamp_predictions,
                     idx_to_label,
@@ -1549,7 +1549,7 @@ def get_events_for_all_files(
             postprocess = tuple(postprocess_dict.items())
             # Create events for each file in parallel
             event_dict[postprocess] = dict(
-                Parallel(n_jobs=workers)(
+                Parallel(n_jobs=workers, verbose=10)(
                     delayed_kvpair(slug, create_events_from_prediction)(
                         timestamp_predictions,
                         idx_to_label,
