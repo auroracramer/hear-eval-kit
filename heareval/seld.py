@@ -405,8 +405,8 @@ def tensor_pairwise_angular_distance_between_cartesian_coordinates(V):
     # Normalize features by norm
     V = V / (la.norm(V, axis=-1, keepdims=True) + 1e-10)
     dists = np.zeros(V.shape[:-1] + (N,))
-    for i in range(stop=N):
-        for j in range(start=i+1, stop=N):
+    for i in range(N):
+        for j in range(i+1, N):
             # TODO: surely there's a convenient way to make this
             #       work using faster matrix products?
             # Compute normalized dot between vectors
