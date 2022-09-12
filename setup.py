@@ -30,6 +30,7 @@ setup(
         "dcase_util",
         "intervaltree",
         "joblib",
+        "loky",
         "more-itertools",
         # for tf 2.6.0
         "numpy==1.19.2",
