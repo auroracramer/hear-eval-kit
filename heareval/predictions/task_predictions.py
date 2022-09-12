@@ -2309,6 +2309,7 @@ def task_predictions(
             devices=devices,
             in_memory=in_memory,
             deterministic=deterministic,
+            limit_train_batches=limit_train_batches,
             evaluation_workers=evaluation_workers,
         )
         split_grid_points.append(grid_point_result)
