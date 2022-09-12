@@ -173,14 +173,14 @@ DEBUG_PARAM_GRID.update(
 MAXGPU_PARAM_GRID = copy.deepcopy(PARAM_GRID)
 MAXGPU_PARAM_GRID.update(
     {
-        "batch_size": [16384],
+        "batch_size": [51200],
     }
 )
 
 DEBUGMAXGPU_PARAM_GRID = copy.deepcopy(DEBUG_PARAM_GRID)
 DEBUGMAXGPU_PARAM_GRID.update(
     {
-        "batch_size": [16384],
+        "batch_size": [51200],
     }
 )
 
