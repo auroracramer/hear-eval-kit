@@ -64,7 +64,7 @@ from heareval.score import (
     spatial_projection_to_nspatial,
     validate_score_return_type,
 )
-from heareval.seld import get_merged_multitrack_seld_events
+from heareval.seld import get_merged_multitrack_seld_events, tensor_pairwise_angular_distance_between_cartesian_coordinates
 from heareval.utils import delayed_kvpair
 
 TASK_SPECIFIC_PARAM_GRID = {
@@ -1293,6 +1293,7 @@ def create_events_from_prediction(
     spatial_projection: Optional[str] = None,
     multitrack: bool = False,
     threshold_multitrack_unify: float = 30.0,
+    precompute_spatial_distances: bool = True,
 ) -> List[Dict[str, Union[float, str]]]:
     """
     Takes a set of prediction tensors keyed on timestamps and generates events.
@@ -1369,6 +1370,18 @@ def create_events_from_prediction(
     # Convert probabilities to binary vectors based on threshold
     class_predictions = (class_predictions > threshold).astype(np.int8)
 
+    # Optionally precompute spatial distances for SELD
+    if prediction_type == "seld" and multitrack:
+        if precompute_spatial_distances:
+            # n_timestamps x n_labels x n_tracks x n_spatial
+            spatial_distances = (
+                tensor_pairwise_angular_distance_between_cartesian_coordinates(
+                    spatial_predictions
+                )
+            )
+        else:
+            spatial_distances = None
+
     events = []
     for label in range(class_predictions.shape[1]):
         for group in more_itertools.consecutive_groups(
@@ -1402,6 +1415,10 @@ def create_events_from_prediction(
                                 spatial,
                                 threshold_multitrack_unify,
                                 spatial_projection=spatial_projection,
+                                dists=(
+                                    spatial_distances[tidx, label]
+                                    if precompute_spatial_distances else None
+                                ),
                             )
                         else:
                             spatial_list = [spatial]

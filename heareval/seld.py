@@ -385,26 +385,59 @@ def pairwise_angular_distance_between_cartesian_coordinates(V):
 
     :return: angular distance in degrees
     """
-    dists = pdist(V, metric='cosine')
+    dists = 1 - pdist(V, metric='cosine')
     dists = np.clip(dists, -1, 1)
     dists = np.arccos(dists) * 180 / np.pi 
     # Convert from compressed upper triangular array to symmetric matrix
     return triu_arr_to_symmetric_dist_matrix(dists, V.shape[0])
 
 
-def pairwise_determine_similar_location(sed, doa, thresh_unify):
-    sed = (sed == 1).astype(doa.dtype)
+def tensor_pairwise_angular_distance_between_cartesian_coordinates(V):
+    """
+    Angular distance between two cartesian coordinates, using the last two dimensions
+    MORE: https://en.wikipedia.org/wiki/Great-circle_distance
+    Check 'From chord length' section
+
+    :return: angular distance in degrees
+    """
+    N = V.shape[-2]
+
+    # Normalize features by norm
+    V = V / (la.norm(V, axis=-1, keepdims=True) + 1e-10)
+    dists = np.zeros(V.shape[:-1] + (N,))
+    for i in range(stop=N):
+        for j in range(start=i+1, stop=N):
+            # TODO: surely there's a convenient way to make this
+            #       work using faster matrix products?
+            # Compute normalized dot between vectors
+            d = np.sum(V[..., i, :] * V[..., j, :], axis=-1)
+            d = np.clip(d, -1, 1)
+            # Get cosine between vectors in degrees
+            d = np.arccos(d) * 180.0 / np.pi
+            # Update distance tensor
+            dists[..., i, j] = d
+            dists[..., j, i] = d
+
+    return dists
+
+
+def pairwise_determine_similar_location(sed, doa, thresh_unify, dists=None):
+    sed = (sed == 1).astype(sed.dtype)
     sed_mask = np.outer(sed, sed)
-    dists = pairwise_angular_distance_between_cartesian_coordinates(doa)
+    if dists is None:
+        dists = pairwise_angular_distance_between_cartesian_coordinates(doa)
     return (dists < thresh_unify) * sed_mask
 
 
-def get_merged_multitrack_seld_events(sed_pred, doa_pred, thresh_unify, spatial_projection=None):
+def get_merged_multitrack_seld_events(sed_pred, doa_pred, thresh_unify, spatial_projection=None, dists=None):
     if sed_pred.shape[0] == doa_pred.shape[0] == 3:
         # If 3 tracks, use the hard-coded version since it's faster 
-        return get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify, spatial_projection=spatial_projection)
+        return get_merged_multitrack_seld_events_3track(
+            sed_pred, doa_pred, thresh_unify,
+            spatial_projection=spatial_projection, dists=dists
+        )
     output = []
-    merge_matrix = pairwise_determine_similar_location(sed_pred, doa_pred, thresh_unify)
+    merge_matrix = pairwise_determine_similar_location(sed_pred, doa_pred, thresh_unify, dists=dists)
     num_merges, merge_labels = connected_components(csgraph=csr_matrix(merge_matrix))
     for merge_idx in range(num_merges):
         merge_mask = merge_labels == merge_idx
@@ -424,28 +457,37 @@ def determine_similar_location_3track(sed_pred0, sed_pred1, doa_pred0, doa_pred1
         return 0
 
 
-def get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify, spatial_projection=None):
+def get_merged_multitrack_seld_events_3track(sed_pred, doa_pred, thresh_unify, spatial_projection=None, dists=None):
     # https://github.com/sharathadavanne/seld-dcase2022/search?q=unify#L103
 
-    if spatial_projection == "unit_xy_disc":
-        # Add a dummy z dimension
-        _doa_pred = np.pad(doa_pred, ((0, 0), (0, 1)))
-    elif spatial_projection == "unit_yz_disc":
-        # Add a dummy x dimension
-        _doa_pred = np.pad(doa_pred, ((0, 0), (1, 0)))
+    if dists is None:
+        if spatial_projection == "unit_xy_disc":
+            # Add a dummy z dimension
+            _doa_pred = np.pad(doa_pred, ((0, 0), (0, 1)))
+        elif spatial_projection == "unit_yz_disc":
+            # Add a dummy x dimension
+            _doa_pred = np.pad(doa_pred, ((0, 0), (1, 0)))
+        else:
+            _doa_pred = doa_pred
+
+        flag_0sim1 = determine_similar_location_3track(
+            sed_pred[0], sed_pred[1], _doa_pred[0], _doa_pred[1], thresh_unify
+        )
+        flag_1sim2 = determine_similar_location_3track(
+            sed_pred[1], sed_pred[2], _doa_pred[1], _doa_pred[2], thresh_unify
+        )
+        flag_2sim0 = determine_similar_location_3track(
+            sed_pred[1], sed_pred[2], _doa_pred[1], _doa_pred[2], thresh_unify
+        )
     else:
-        _doa_pred = doa_pred
+        merge_matrix = pairwise_determine_similar_location(
+            sed_pred, doa_pred, thresh_unify, dists=dists,
+        )
+        flag_0sim1 = merge_matrix[0, 1]
+        flag_1sim2 = merge_matrix[1, 2]
+        flag_2sim0 = merge_matrix[2, 0]
 
     output = []
-    flag_0sim1 = determine_similar_location_3track(
-        sed_pred[0], sed_pred[1], _doa_pred[0], _doa_pred[1], thresh_unify
-    )
-    flag_1sim2 = determine_similar_location_3track(
-        sed_pred[1], sed_pred[2], _doa_pred[1], _doa_pred[2], thresh_unify
-    )
-    flag_2sim0 = determine_similar_location_3track(
-        sed_pred[1], sed_pred[2], _doa_pred[1], _doa_pred[2], thresh_unify
-    )
     # unify or not unify according to flag
     if flag_0sim1 + flag_1sim2 + flag_2sim0 == 0:
         if sed_pred[0] > 0.5:
