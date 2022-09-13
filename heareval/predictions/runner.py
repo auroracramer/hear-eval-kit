@@ -63,6 +63,12 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
     type=click.INT,
 )
 @click.option(
+    "--monitor-devices",
+    default=False,
+    help="monitor accelerator devices",
+    type=click.INT,
+)
+@click.option(
     "--accelerator",
     default="gpu" if torch.cuda.is_available() else "cpu",
     help="Accelerator to use (gpu or cpu)",
@@ -121,6 +127,7 @@ def runner(
     shuffle: bool = False,
     limit_train_batches: Optional[Union[int, float]] = None,
     evaluation_workers: int = 1,
+    monitor_devices: bool = False,
 ) -> None:
 
     if shuffle:
@@ -167,6 +174,7 @@ def runner(
             logger=logger,
             limit_train_batches=(limit_train_batches or None),
             evaluation_workers=evaluation_workers,
+            monitor_devices=monitor_devices,
         )
         sys.stdout.flush()
         gpu_max_mem_used = gpu_max_mem.measure()

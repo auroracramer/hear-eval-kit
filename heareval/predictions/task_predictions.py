@@ -46,6 +46,7 @@ import torchinfo
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
+from pytorch_lightning.callbacks.device_stats_monitor import DeviceStatsMonitor
 from pytorch_lightning.loggers import CSVLogger
 from scipy.ndimage import median_filter
 from sklearn.model_selection import ParameterGrid
@@ -1789,6 +1790,7 @@ def task_predictions_train(
     deterministic: bool,
     limit_train_batches: Optional[Union[int, float]],
     evaluation_workers: int,
+    monitor_devices: bool,
 ) -> GridPointResult:
     """
     Train a predictor for a specific task using pre-computed embeddings.
@@ -1886,6 +1888,8 @@ def task_predictions_train(
         # This loss is much faster, but will give poorer scores
         target_score = "val_loss"
         mode = "min"
+
+    # Set up callbacks
     checkpoint_callback = ModelCheckpoint(monitor=target_score, mode=mode)
     early_stop_callback = EarlyStopping(
         monitor=target_score,
@@ -1895,6 +1899,10 @@ def task_predictions_train(
         verbose=False,
         mode=mode,
     )
+    callbacks = [checkpoint_callback, early_stop_callback]
+    if monitor_devices:
+    device_stats_monitor_callback = DeviceStatsMonitor()
+        callbacks.append(device_stats_monitor_callback)
 
     logger = CSVLogger(Path("logs").joinpath(embedding_path))
     logger.log_hyperparams(hparams_to_json(conf))
@@ -1902,7 +1910,7 @@ def task_predictions_train(
     # Try also pytorch profiler
     # profiler = pl.profiler.AdvancedProfiler(output_filename="predictions-profile.txt")
     trainer = pl.Trainer(
-        callbacks=[checkpoint_callback, early_stop_callback],
+        callbacks=callbacks,
         devices=devices,
         accelerator=accelerator,
         check_val_every_n_epoch=conf["check_val_every_n_epoch"],
