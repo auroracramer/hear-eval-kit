@@ -29,8 +29,9 @@ from itertools import groupby, permutations, product
 from functools import reduce
 from operator import itemgetter, mul
 from pathlib import Path
+from types import FunctionType
 from typing import (
-    Any, DefaultDict, Dict, List, Optional, Sequence, Tuple, Union
+    Any, Callable, DefaultDict, Dict, List, Optional, Sequence, Tuple, Union
 )
 
 import more_itertools
@@ -1705,10 +1706,12 @@ class GridPointResult:
         time_in_min: float,
         hparams: Dict[str, Any],
         postprocessing: Tuple[Tuple[str, Any], ...],
-        trainer: pl.Trainer,
         validation_score: float,
         score_mode: str,
         conf: Dict,
+        trainer_kwargs: Dict,
+        callbacks: List[Tuple[Callable, Dict[str, Any]]], 
+        logger_path: Union[Path, str],
         extra_predictor_kwargs: Optional[Dict] = None,
     ):
         self.model_path = model_path
@@ -1737,22 +1740,19 @@ class GridPointResult:
 
         # Store configs for reconstructing trainer
         # so we don't have to keep it loaded in memory
-        self.trainer_args = {
-            "callbacks": trainer.callbacks,
-            "devices": trainer._accelerator_connector._devices_flag,
-            "accelerator": trainer._accelerator_connector._accelerator_flag,
-            "check_val_every_n_epoch": trainer.check_val_every_n_epoch,
-            "max_epochs": trainer.fit_loop.max_epochs,
-            "num_sanity_val_steps": 0,
-            "auto_select_gpus": True,
-            "profiler": "simple",
-            "logger": trainer.loggers,
-            "deterministic": trainer._accelerator_connector.deterministic,
-        }
+        self.trainer_kwargs = trainer_kwargs
+        self.logger_path = logger_path
+        self.callbacks = callbacks
 
     @property
     def trainer(self):
-        trainer = pl.Trainer(**self.trainer_args)
+        trainer = pl.Trainer(
+            # Reconstruct callbacks so they aren't tied to the original
+            # trainer object
+            callbacks=construct_callbacks(self.callbacks),
+            logger=CSVLogger(self.logger_path),
+            **self.trainer_kwargs,
+        )
         # This hack is necessary because we use the best validation epoch to
         # choose the event postprocessing
         trainer.fit_loop.current_epoch = self.epoch
@@ -1773,6 +1773,10 @@ class GridPointResult:
                 self.postprocessing,
             )
         )
+
+
+def construct_callbacks(callbacks: List[Tuple[Callable, Dict[str, Any]]]):
+    return [cls(**kwargs) for cls, kwargs in callbacks]
 
 
 def task_predictions_train(
@@ -1890,40 +1894,56 @@ def task_predictions_train(
         target_score = "val_loss"
         mode = "min"
 
-    # Set up callbacks
-    checkpoint_callback = ModelCheckpoint(monitor=target_score, mode=mode)
-    early_stop_callback = EarlyStopping(
-        monitor=target_score,
-        min_delta=0.00,
-        patience=conf["patience"],
-        check_on_train_epoch_end=False,
-        verbose=False,
-        mode=mode,
-    )
-    callbacks = [checkpoint_callback, early_stop_callback]
+    # Set up callbacks in a way that can be reconstructed easily
+    callbacks = [
+        (
+            ModelCheckpoint,
+            {
+                "monitor": target_score,
+                "mode": mode,
+            },
+        ),
+        (
+            EarlyStopping,
+            {
+                "monitor": target_score,
+                "min_delta": 0.00,
+                "patience": conf["patience"],
+                "check_on_train_epoch_end": False,
+                "verbose": False,
+                "mode": mode,
+            }
+        ),
+    ]
     if monitor_devices:
-        device_stats_monitor_callback = DeviceStatsMonitor()
-        callbacks.append(device_stats_monitor_callback)
+        callbacks.append((DeviceStatsMonitor, {}))
 
-    logger = CSVLogger(Path("logs").joinpath(embedding_path))
+    callbacks = construct_callbacks(callbacks)
+    checkpoint_callback: ModelCheckpoint = callbacks[0]
+
+    logger_path = Path("logs").joinpath(embedding_path)
+    logger = CSVLogger(logger_path)
     logger.log_hyperparams(hparams_to_json(conf))
 
     # Try also pytorch profiler
     # profiler = pl.profiler.AdvancedProfiler(output_filename="predictions-profile.txt")
+    trainer_kwargs = {
+        "devices": devices,
+        "accelerator": accelerator,
+        "check_val_every_n_epoch": conf["check_val_every_n_epoch"],
+        "max_epochs": conf["max_epochs"],
+        "deterministic": deterministic,
+        "num_sanity_val_steps": 0,
+        "auto_select_gpus": True,
+        # "profiler": profiler,
+        # "profiler": "pytorch",
+        "profiler": "simple",
+        "limit_train_batches": limit_train_batches,
+    }
     trainer = pl.Trainer(
         callbacks=callbacks,
-        devices=devices,
-        accelerator=accelerator,
-        check_val_every_n_epoch=conf["check_val_every_n_epoch"],
-        max_epochs=conf["max_epochs"],
-        deterministic=deterministic,
-        num_sanity_val_steps=0,
-        # profiler=profiler,
-        # profiler="pytorch",
-        auto_select_gpus=True,
-        profiler="simple",
         logger=logger,
-        limit_train_batches=limit_train_batches,
+        **trainer_kwargs,
     )
     train_dataloader = dataloader_from_split_name(
         data_splits["train"],
@@ -1958,7 +1978,7 @@ def task_predictions_train(
     )
     trainer.fit(predictor, train_dataloader, valid_dataloader)
     # Help out garbage collection
-    train_dataloader = valid_dataloader = None
+    trainer = train_dataloader = valid_dataloader = None
     if checkpoint_callback.best_model_score is not None:
         sys.stdout.flush()
         end = time.time()
@@ -1979,10 +1999,12 @@ def task_predictions_train(
             time_in_min=time_in_min,
             hparams=dict(predictor.hparams),
             postprocessing=best_postprocessing,
-            trainer=trainer,
             validation_score=checkpoint_callback.best_model_score.detach().cpu().item(),
             score_mode=mode,
             conf=conf,
+            trainer_kwargs=trainer_kwargs,
+            callbacks=callbacks,
+            logger_path=logger_path,
             extra_predictor_kwargs={
                 "evaluation_workers": evaluation_workers,
             }
