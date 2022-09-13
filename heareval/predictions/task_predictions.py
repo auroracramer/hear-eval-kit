@@ -86,17 +86,18 @@ class BatchNorm1dSeq(torch.nn.BatchNorm1d):
 
 PRED_TYPE_SPECIFIC_PARAM_GRID = {
     "seld": {
+        "process_sequence": [False],
         # for specifying parameters that are coupled
-        "COUPLED_process_sequence": [
-            {
-                "process_sequence": False,
-            },
-            {
-                "process_sequence": True,
-                "sequence_chunk_length": 5,
-                "hidden_norm": BatchNorm1dSeq,
-            },
-        ]
+        #"COUPLED_process_sequence": [
+        #    {
+        #        "process_sequence": False,
+        #    },
+        #    {
+        #        "process_sequence": True,
+        #        "sequence_chunk_length": 5,
+        #        "hidden_norm": BatchNorm1dSeq,
+        #    },
+        #],
     },
 }
 
@@ -1901,7 +1902,7 @@ def task_predictions_train(
     )
     callbacks = [checkpoint_callback, early_stop_callback]
     if monitor_devices:
-    device_stats_monitor_callback = DeviceStatsMonitor()
+        device_stats_monitor_callback = DeviceStatsMonitor()
         callbacks.append(device_stats_monitor_callback)
 
     logger = CSVLogger(Path("logs").joinpath(embedding_path))
