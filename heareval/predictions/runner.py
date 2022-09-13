@@ -66,7 +66,7 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
     "--monitor-devices",
     default=False,
     help="monitor accelerator devices",
-    type=click.INT,
+    type=click.BOOL,
 )
 @click.option(
     "--accelerator",
