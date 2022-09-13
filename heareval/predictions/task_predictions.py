@@ -2228,6 +2228,7 @@ def task_predictions(
     logger: logging.Logger,
     limit_train_batches: Optional[Union[int, float]],
     evaluation_workers: int,
+    monitor_devices: bool,
 ):
     # By setting workers=True in seed_everything(), Lightning derives
     # unique seeds across all dataloader workers and processes
@@ -2319,6 +2320,7 @@ def task_predictions(
             deterministic=deterministic,
             limit_train_batches=limit_train_batches,
             evaluation_workers=evaluation_workers,
+            monitor_devices=monitor_devices,
         )
         logger.info(f" result: {grid_point_result}")
         grid_point_results.append(grid_point_result)
@@ -2359,6 +2361,7 @@ def task_predictions(
             deterministic=deterministic,
             limit_train_batches=limit_train_batches,
             evaluation_workers=evaluation_workers,
+            monitor_devices=monitor_devices,
         )
         split_grid_points.append(grid_point_result)
         logger.info(
