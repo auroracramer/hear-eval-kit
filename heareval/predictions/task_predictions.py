@@ -99,6 +99,8 @@ PRED_TYPE_SPECIFIC_PARAM_GRID = {
         #        "hidden_norm": BatchNorm1dSeq,
         #    },
         #],
+        # SELD eval is slow
+        "check_val_every_n_epoch": [10],
     },
 }
 
@@ -200,8 +202,6 @@ EVENT_POSTPROCESSING_GRID = {
 PRED_TYPE_EVENT_POSTPROCESSING_GRID = {
     "seld": {
         "min_duration": [0],
-        # SELD eval is slow
-        "check_val_every_n_epoch": [10],
     },
 }
 
