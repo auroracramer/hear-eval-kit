@@ -199,7 +199,9 @@ EVENT_POSTPROCESSING_GRID = {
 
 PRED_TYPE_EVENT_POSTPROCESSING_GRID = {
     "seld": {
-        "min_duration": [0]
+        "min_duration": [0],
+        # SELD eval is slow
+        "check_val_every_n_epoch": [10],
     },
 }
 
