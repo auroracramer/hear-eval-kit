@@ -2003,10 +2003,10 @@ def task_predictions_train(
         **trainer_kwargs,
     )
     train_dataloader = dataloader_from_dataset(
-        train_dataset, in_memory, conf["batch_size"],
+        data_splits["train"], train_dataset, in_memory, conf["batch_size"],
     )
     valid_dataloader = dataloader_from_dataset(
-        valid_dataset, in_memory, conf["batch_size"],
+        data_splits["valid"], valid_dataset, in_memory, conf["batch_size"],
     )
     trainer.fit(predictor, train_dataloader, valid_dataloader)
     # Help out garbage collection
@@ -2068,7 +2068,10 @@ def task_predictions_test(
         **dataset_kwargs,
     )
     test_dataloader = dataloader_from_dataset(
-        test_dataset, in_memory, grid_point.conf["batch_size"],
+        split_name=data_splits["test"],
+        dataset=test_dataset,
+        in_memory=in_memory,
+        batch_size=grid_point.conf["batch_size"],
     )
 
     # Run tests
