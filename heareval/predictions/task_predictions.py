@@ -1595,7 +1595,7 @@ def label_vocab_nlabels(embedding_path: Path) -> Tuple[pd.DataFrame, int]:
     return (label_vocab, nlabels)
 
 
-def dataloader_from_split_name(
+def dataset_from_split_name(
     split_name: Union[str, List[str]],
     embedding_path: Path,
     label_to_idx: Dict[str, int],
@@ -1604,8 +1604,6 @@ def dataloader_from_split_name(
     prediction_type: str,
     in_memory: bool,
     metadata: bool = True,
-    batch_size: int = 64,
-    pin_memory: bool = True,
     spatial_projection: Optional[str] = None,
     ntracks: Optional[int] = None,
     nsublabels: Optional[int] = None,
@@ -1667,7 +1665,46 @@ def dataloader_from_split_name(
         )
     else:
         raise ValueError("split_name should be a list or string")
+    return dataset
 
+
+def get_train_valid_datasets(split, dataset_kwargs):
+    train_dataset = dataset_from_split_name(
+        split_name=split["train"],
+        metadata=False,
+        **dataset_kwargs,
+    )
+    valid_dataset = dataset_from_split_name(
+        split_name=split["valid"],
+        metadata=True,
+        **dataset_kwargs,
+    )
+    return train_dataset, valid_dataset
+
+
+def dataloader_from_dataset(
+    split_name: Union[str, List[str]],
+    dataset: SplitMemmapDataset,
+    in_memory: bool,
+    batch_size: int = 64,
+    pin_memory: bool = True,
+) -> DataLoader:
+    """
+    Get the dataloader for a `split_name` or a list of `split_name`
+
+    For a list of `split_name`, the dataset for each split will be concatenated.
+
+    Case 1 - split_name is a string
+        The Dataloader is built from a single data split.
+    Case 2 - split_name is a list of string
+        The Dataloader combines the data from the list of splits and
+        returns a combined dataloader. This is useful when combining
+        multiple folds of data to create the training or validation
+        dataloader. For example, in k-fold, the training data-loader
+        might be made from the first 4/5 folds, and calling this function
+        with [fold00, fold01, fold02, fold03] will create the
+        required dataloader
+    """
     print(
         f"Getting embeddings for split {split_name}, "
         + f"which has {len(dataset)} instances."
@@ -1781,9 +1818,27 @@ def construct_callbacks(callbacks: List[Tuple[Callable, Dict[str, Any]]]):
     return [cls(**kwargs) for cls, kwargs in callbacks]
 
 
+def get_dataset_kwargs(embedding_path, label_to_idx, nlabels, in_memory, metadata, conf):
+    return {
+        "embedding_path": embedding_path,
+        "label_to_idx": label_to_idx,
+        "nlabels": nlabels,
+        "embedding_type": metadata["embedding_type"],
+        "prediction_type": metadata["prediction_type"],
+        "in_memory": in_memory,
+        "spatial_projection": metadata.get("spatial_projection"),
+        "ntracks": (metadata.get("multitrack") and metadata.get("num_tracks")),
+        "nsublabels": (metadata.get("num_regions") or metadata.get("num_sublabels")),
+        "include_seq_dim": bool(conf.get("process_sequence")),
+        "nseqchunk": conf.get("sequencechunk_length"),
+    }
+
+
 def task_predictions_train(
     embedding_path: Path,
     embedding_size: int,
+    train_dataset: SplitMemmapDataset,
+    valid_dataset: SplitMemmapDataset,
     metadata: Dict[str, Any],
     data_splits: Dict[str, List[str]],
     label_to_idx: Dict[str, int],
@@ -1947,36 +2002,11 @@ def task_predictions_train(
         logger=logger,
         **trainer_kwargs,
     )
-    train_dataloader = dataloader_from_split_name(
-        data_splits["train"],
-        embedding_path,
-        label_to_idx,
-        nlabels,
-        metadata["embedding_type"],
-        metadata["prediction_type"],
-        batch_size=conf["batch_size"],
-        in_memory=in_memory,
-        metadata=False,
-        spatial_projection=metadata.get("spatial_projection"),
-        ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
-        nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
-        include_seq_dim=bool(conf.get("process_sequence")),
-        nseqchunk=conf.get("sequence_chunk_length"),
+    train_dataloader = dataloader_from_dataset(
+        train_dataset, in_memory, conf["batch_size"],
     )
-    valid_dataloader = dataloader_from_split_name(
-        data_splits["valid"],
-        embedding_path,
-        label_to_idx,
-        nlabels,
-        metadata["embedding_type"],
-        metadata["prediction_type"],
-        batch_size=conf["batch_size"],
-        in_memory=in_memory,
-        spatial_projection=metadata.get("spatial_projection"),
-        ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
-        nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
-        include_seq_dim=bool(conf.get("process_sequence")),
-        nseqchunk=conf.get("sequence_chunk_length"),
+    valid_dataloader = dataloader_from_dataset(
+        valid_dataset, in_memory, conf["batch_size"],
     )
     trainer.fit(predictor, train_dataloader, valid_dataloader)
     # Help out garbage collection
@@ -2029,20 +2059,16 @@ def task_predictions_test(
     """
     Test a pre-trained predictor using precomputed embeddings.
     """
-    test_dataloader = dataloader_from_split_name(
+    dataset_kwargs = get_dataset_kwargs(
+        embedding_path, label_to_idx, nlabels, in_memory, metadata, grid_point.conf
+    )
+    test_dataset = dataset_from_split_name(
         data_splits["test"],
-        embedding_path,
-        label_to_idx,
-        nlabels,
-        metadata["embedding_type"],
-        metadata["prediction_type"],
-        batch_size=grid_point.conf["batch_size"],
-        in_memory=in_memory,
-        spatial_projection=metadata.get("spatial_projection"),
-        ntracks=(metadata.get("multitrack") and metadata.get("num_tracks")),
-        nsublabels=(metadata.get("num_regions") or metadata.get("num_sublabels")),
-        include_seq_dim=bool(grid_point.conf.get("process_sequence")),
-        nseqchunk=grid_point.conf.get("sequence_chunk_length"),
+        metadata=True,
+        **dataset_kwargs,
+    )
+    test_dataloader = dataloader_from_dataset(
+        test_dataset, in_memory, grid_point.conf["batch_size"],
     )
 
     # Run tests
@@ -2295,6 +2321,9 @@ def task_predictions(
     confs = list(ParameterGrid(final_grid))
     random.shuffle(confs)
 
+    dataset_kwargs = None
+    train_dataset, valid_dataset = None, None
+
     grid_point_results = []
     for confi, conf in tqdm(
         enumerate(confs[:grid_points]),
@@ -2305,10 +2334,28 @@ def task_predictions(
         for k in coupled_keys:
             conf.update(conf.pop(k))
 
+        # Preload dataset, which in most cases will be the same across grid points
+        if not dataset_kwargs:
+            dataset_kwargs = get_dataset_kwargs(
+                embedding_path, label_to_idx, nlabels, in_memory, metadata, conf,
+            )
+            train_dataset, valid_dataset = get_train_valid_datasets(data_splits[0], dataset_kwargs)
+        else:
+            curr_dataset_kwargs = get_dataset_kwargs(
+                embedding_path, label_to_idx, nlabels, in_memory, metadata, conf,
+            )
+            # TODO: make sure this will work recursively
+            if curr_dataset_kwargs != dataset_kwargs:
+                dataset_kwargs = curr_dataset_kwargs
+                train_dataset, valid_dataset = get_train_valid_datasets(data_splits[0], dataset_kwargs)
+
+
         logger.info(f"Grid point {confi+1} of {grid_points}: {conf}")
         grid_point_result = task_predictions_train(
             embedding_path=embedding_path,
             embedding_size=embedding_size,
+            train_dataset=train_dataset,
+            valid_dataset=valid_dataset,
             metadata=metadata,
             data_splits=data_splits[0],
             label_to_idx=label_to_idx,
@@ -2346,10 +2393,26 @@ def task_predictions(
         enumerate(data_splits[1:]),
         desc="training splits",
     ):
+        dataloader_kwargs = get_dataset_kwargs(
+            embedding_path, label_to_idx, nlabels,
+            in_memory, metadata, conf
+        )
+        train_dataset = dataset_from_split_name(
+            split_name=split["train"],
+            metadata=False,
+            **dataset_kwargs,
+        )
+        valid_dataset = dataset_from_split_name(
+            split_name=split["valid"],
+            metadata=False,
+            **dataset_kwargs,
+        )
         logger.info(f"Training split {spliti+2} of {len(data_splits)}: {split}")
         grid_point_result = task_predictions_train(
             embedding_path=embedding_path,
             embedding_size=embedding_size,
+            train_dataset=train_dataset,
+            valid_dataset=valid_dataset,
             metadata=metadata,
             data_splits=split,
             label_to_idx=label_to_idx,
