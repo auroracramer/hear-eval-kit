@@ -1858,6 +1858,7 @@ def task_predictions_train(
     limit_train_batches: Optional[Union[int, float]],
     evaluation_workers: int,
     monitor_devices: bool,
+    profiler: Optional[str],
 ) -> GridPointResult:
     """
     Train a predictor for a specific task using pre-computed embeddings.
@@ -1987,8 +1988,6 @@ def task_predictions_train(
     logger = CSVLogger(logger_path)
     logger.log_hyperparams(hparams_to_json(conf))
 
-    # Try also pytorch profiler
-    # profiler = pl.profiler.AdvancedProfiler(output_filename="predictions-profile.txt")
     trainer_kwargs = {
         "devices": devices,
         "accelerator": accelerator,
@@ -1997,9 +1996,7 @@ def task_predictions_train(
         "deterministic": deterministic,
         "num_sanity_val_steps": 0,
         "auto_select_gpus": True,
-        # "profiler": profiler,
-        # "profiler": "pytorch",
-        "profiler": "simple",
+        "profiler": profiler,
         "limit_train_batches": limit_train_batches,
     }
     trainer = pl.Trainer(
@@ -2271,6 +2268,7 @@ def task_predictions(
     limit_train_batches: Optional[Union[int, float]],
     evaluation_workers: int,
     monitor_devices: bool,
+    profiler: Optional[str],
 ):
     # By setting workers=True in seed_everything(), Lightning derives
     # unique seeds across all dataloader workers and processes
@@ -2385,6 +2383,7 @@ def task_predictions(
             limit_train_batches=limit_train_batches,
             evaluation_workers=evaluation_workers,
             monitor_devices=monitor_devices,
+            profiler=profiler,
         )
         logger.info(f" result: {grid_point_result}")
         grid_point_results.append(grid_point_result)
@@ -2445,6 +2444,7 @@ def task_predictions(
             limit_train_batches=limit_train_batches,
             evaluation_workers=evaluation_workers,
             monitor_devices=monitor_devices,
+            profiler=profiler,
         )
         split_grid_points.append(grid_point_result)
         logger.info(

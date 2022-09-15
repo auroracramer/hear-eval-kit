@@ -116,6 +116,12 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
     help="Number of parallel workers to use for computing evaluation results",
     type=click.INT,
 )
+@click.option(
+    "--profiler",
+    default="simple",
+    help='Name of profiler to use: ["none", "simple", "advanced", "pytorch"]',
+    type=click.STRING,
+)
 def runner(
     task_dirs: List[str],
     grid_points: int = 8,
@@ -128,6 +134,7 @@ def runner(
     limit_train_batches: Optional[Union[int, float]] = None,
     evaluation_workers: int = 1,
     monitor_devices: bool = False,
+    profiler: str = "simple",
 ) -> None:
 
     if shuffle:
@@ -175,6 +182,7 @@ def runner(
             limit_train_batches=(limit_train_batches or None),
             evaluation_workers=evaluation_workers,
             monitor_devices=monitor_devices,
+            profiler=(profiler if profiler != "none" else None),
         )
         sys.stdout.flush()
         gpu_max_mem_used = gpu_max_mem.measure()
