@@ -2008,10 +2008,16 @@ def task_predictions_train(
         **trainer_kwargs,
     )
     train_dataloader = dataloader_from_dataset(
-        data_splits["train"], train_dataset, in_memory, conf["batch_size"],
+        split_name=data_splits["train"],
+        dataset=train_dataset,
+        in_memory=in_memory,
+        batch_size=conf["batch_size"],
     )
     valid_dataloader = dataloader_from_dataset(
-        data_splits["valid"], valid_dataset, in_memory, conf["batch_size"],
+        data_splits["valid"],
+        dataset=valid_dataset,
+        in_memory=in_memory,
+        batch_size=conf["batch_size"],
     )
     trainer.fit(predictor, train_dataloader, valid_dataloader)
     # Help out garbage collection
