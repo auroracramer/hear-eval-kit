@@ -419,9 +419,11 @@ class FullyConnectedPrediction(torch.nn.Module):
         self.projection: torch.nn.Module = torch.nn.Linear(curdim, nout)
         # Create reshape layer to get structured output
         if len(pred_shape) > 1:
-            self.reshape = torch.nn.Unflatten(-1, pred_shape)
+            #self.reshape = torch.nn.Unflatten(-1, pred_shape)
+            self.pred_shape = pred_shape
         else:
-            self.reshape = None
+            #self.reshape = None
+            self.pred_shape = pred_shape
         conf["initialization"](
             self.projection.weight, gain=torch.nn.init.calculate_gain(last_activation)
         )
@@ -487,8 +489,10 @@ class FullyConnectedPrediction(torch.nn.Module):
     def forward_loss_compatible(self, x: torch.Tensor) -> torch.Tensor:
         x = self.hidden(x)
         x = self.projection(x)
-        if isinstance(self.reshape, torch.nn.Module):
-            x = self.reshape(x)
+        #if isinstance(self.reshape, torch.nn.Module):
+        #    x = self.reshape(x)
+        if self.pred_shape:
+            x = x.view(*x.shape[:-1], *self.pred_shape)
         return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
