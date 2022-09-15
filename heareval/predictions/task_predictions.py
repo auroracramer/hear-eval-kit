@@ -1611,7 +1611,7 @@ def dataset_from_split_name(
     nseqchunk: Optional[int] = None,
 ) -> DataLoader:
     """
-    Get the dataloader for a `split_name` or a list of `split_name`
+    Get the dataset for a `split_name` or a list of `split_name`
 
     For a list of `split_name`, the dataset for each split will be concatenated.
 
@@ -2396,7 +2396,7 @@ def task_predictions(
         enumerate(data_splits[1:]),
         desc="training splits",
     ):
-        dataloader_kwargs = get_dataset_kwargs(
+        dataset_kwargs = get_dataset_kwargs(
             embedding_path, label_to_idx, nlabels,
             in_memory, metadata, conf
         )
