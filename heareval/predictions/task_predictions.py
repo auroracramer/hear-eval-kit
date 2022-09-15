@@ -2390,6 +2390,9 @@ def task_predictions(
         grid_point_results.append(grid_point_result)
         print_scores(grid_point_results, embedding_path, logger)
 
+    # Clear datasets
+    train_dataset, valid_dataset = None, None
+
     # Use the best hyperparameters to train models for remaining folds,
     # then compute test scores using the resulting models
     grid_point_results = sort_grid_points(grid_point_results)
@@ -2448,6 +2451,9 @@ def task_predictions(
             f"Validation Score for the Training Split: "
             f"{grid_point_result.validation_score}"
         )
+
+    # Clear datasets
+    train_dataset, valid_dataset = None, None
 
     # Now test each of the trained models
     test_results = {}
