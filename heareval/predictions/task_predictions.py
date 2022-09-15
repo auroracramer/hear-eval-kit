@@ -959,9 +959,7 @@ class EventPredictionModel(AbstractPredictionModel):
         # print("\n\n\n", epoch)
 
         if name == "test" or self.use_scoring_for_early_stopping:
-            target = target.detach().cpu().numpy()
             prediction = prediction.detach().cpu().numpy()
-            prediction_logit = prediction_logit.detach().cpu().numpy()
             if isinstance(timestamp, torch.Tensor):
                 timestamp = timestamp.detach().cpu().numpy()
 
@@ -1028,6 +1026,8 @@ class EventPredictionModel(AbstractPredictionModel):
             score_and_postprocessing = predicted_events_by_postprocessing = None
 
             if name == "test":
+                target = target.detach().cpu().numpy()
+                prediction_logit = prediction_logit.detach().cpu().numpy()
                 # Cache all predictions for later serialization
                 self.save_test_predictions(
                     {
