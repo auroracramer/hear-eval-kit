@@ -31,7 +31,7 @@ from operator import itemgetter, mul
 from pathlib import Path
 from types import FunctionType
 from typing import (
-    Any, Callable, DefaultDict, Dict, List, Optional, Sequence, Tuple, Union
+    Any, Callable, DefaultDict, Dict, List, Optional, Sequence, Set, Tuple, Union
 )
 
 import more_itertools
@@ -1533,12 +1533,15 @@ def get_events_for_all_files(
     # timestamps are in sorted order. But this makes sure of it.
     assert predictions.shape[0] == len(filenames)
     assert predictions.shape[0] == len(timestamps)
+    # Use set for membership checks for speed
+    slug_set: Set[str] = set()
     event_files: Dict[str, Dict[float, np.ndarray]] = {}
     for i, (filename, timestamp) in enumerate(zip_equal(filenames, timestamps)):
         slug = Path(filename).name
 
         # Key on the slug to be consistent with the ground truth
-        if slug not in event_files:
+        if slug not in slug_set:
+            slug_set.add(slug)
             event_files[slug] = {}
 
         # Save the predictions for the file keyed on the timestamp
