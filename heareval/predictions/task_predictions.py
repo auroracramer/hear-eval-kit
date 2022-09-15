@@ -1665,6 +1665,11 @@ def dataset_from_split_name(
         )
     else:
         raise ValueError("split_name should be a list or string")
+
+    print(
+        f"Loaded dataset for split {split_name}, "
+        + f"which has {len(dataset)} instances."
+    )
     return dataset
 
 
@@ -2347,10 +2352,11 @@ def task_predictions(
             curr_dataset_kwargs = get_dataset_kwargs(
                 embedding_path, label_to_idx, nlabels, in_memory, metadata, conf,
             )
-            # TODO: make sure this will work recursively
             if curr_dataset_kwargs != dataset_kwargs:
                 dataset_kwargs = curr_dataset_kwargs
                 train_dataset, valid_dataset = get_train_valid_datasets(data_splits[0], dataset_kwargs)
+            else:
+                print("*** Reusing datasets ***")
 
 
         logger.info(f"Grid point {confi+1} of {grid_points}: {conf}")
