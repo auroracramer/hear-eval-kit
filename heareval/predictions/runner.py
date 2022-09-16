@@ -87,6 +87,12 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
     type=click.BOOL,
 )
 @click.option(
+    "--pin-memory",
+    default=True,
+    help="Use CUDA memory pinning",
+    type=click.BOOL,
+)
+@click.option(
     "--deterministic",
     default=True,
     help="Deterministic or non-deterministic. (Default: True)",
@@ -111,6 +117,15 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
     type=click.INT,
 )
 @click.option(
+    "--dataloader-workers",
+    default=-1,
+    help=(
+        "Number of parallel workers to use for data loading (when possible). "
+        "If < 0, uses all available cores. If 0, loads data on main thread."
+    ),
+    type=click.INT,
+)
+@click.option(
     "--evaluation-workers",
     default=1,
     help="Number of parallel workers to use for computing evaluation results",
@@ -128,10 +143,12 @@ def runner(
     accelerator: str = "gpu" if torch.cuda.is_available() else "cpu",
     devices: int = 1,
     in_memory: bool = True,
+    pin_memory: bool = True,
     deterministic: bool = True,
     grid: str = "default",
     shuffle: bool = False,
     limit_train_batches: Optional[Union[int, float]] = None,
+    dataloader_workers: int = 0,
     evaluation_workers: int = 1,
     monitor_devices: bool = False,
     profiler: str = "simple",
@@ -176,10 +193,12 @@ def runner(
             accelerator=accelerator,
             devices=devices,
             in_memory=in_memory,
+            pin_memory=pin_memory,
             deterministic=deterministic,
             grid=grid,
             logger=logger,
             limit_train_batches=(limit_train_batches or None),
+            dataloader_workers=(dataloader_workers if dataloader_workers >= 0 else None),
             evaluation_workers=evaluation_workers,
             monitor_devices=monitor_devices,
             profiler=(profiler if profiler != "none" else None),

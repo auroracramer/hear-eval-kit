@@ -12,6 +12,7 @@ TODO:
     many models simultaneously with one disk read?
 """
 
+from lib2to3.pgen2.token import OP
 import os
 import copy
 import gc
@@ -1700,6 +1701,7 @@ def dataloader_from_dataset(
     in_memory: bool,
     batch_size: int = 64,
     pin_memory: bool = True,
+    dataloader_workers: Optional[int] = None,
 ) -> DataLoader:
     """
     Get the dataloader for a `split_name` or a list of `split_name`
@@ -1726,7 +1728,10 @@ def dataloader_from_dataset(
     # If automatic memory pinning is set to True then the num_workers should be zero
     # https://pytorch.org/docs/stable/data.html#single-and-multi-process-data-loading
     if in_memory and not pin_memory:
-        num_workers = NUM_WORKERS
+        if dataloader_workers is not None:
+            num_workers = int(dataloader_workers / (max(1, torch.cuda.device_count())))
+        else:
+            num_workers = NUM_WORKERS
     else:
         # We are disk bound or using automatic memory pinning,
         # so multiple workers might cause thrashing and slowdowns
@@ -1861,8 +1866,10 @@ def task_predictions_train(
     accelerator: str,
     devices: int,
     in_memory: bool,
+    pin_memory: bool,
     deterministic: bool,
     limit_train_batches: Optional[Union[int, float]],
+    dataloader_workers: int,
     evaluation_workers: int,
     monitor_devices: bool,
     profiler: Optional[str],
@@ -2015,13 +2022,17 @@ def task_predictions_train(
         split_name=data_splits["train"],
         dataset=train_dataset,
         in_memory=in_memory,
+        pin_memory=pin_memory,
         batch_size=conf["batch_size"],
+        dataloader_workers=dataloader_workers,
     )
     valid_dataloader = dataloader_from_dataset(
         data_splits["valid"],
         dataset=valid_dataset,
         in_memory=in_memory,
+        pin_memory=pin_memory,
         batch_size=conf["batch_size"],
+        dataloader_workers=dataloader_workers,
     )
     trainer.fit(predictor, train_dataloader, valid_dataloader)
     # Help out garbage collection
@@ -2070,6 +2081,8 @@ def task_predictions_test(
     label_to_idx: Dict[str, int],
     nlabels: int,
     in_memory: bool,
+    pin_memory: bool,
+    dataloader_workers: Optional[int],
 ):
     """
     Test a pre-trained predictor using precomputed embeddings.
@@ -2086,7 +2099,9 @@ def task_predictions_test(
         split_name=data_splits["test"],
         dataset=test_dataset,
         in_memory=in_memory,
+        pin_memory=pin_memory,
         batch_size=grid_point.conf["batch_size"],
+        dataloader_workers=dataloader_workers,
     )
 
     # Run tests
@@ -2269,10 +2284,12 @@ def task_predictions(
     accelerator: str,
     devices: int,
     in_memory: bool,
+    pin_memory: bool,
     deterministic: bool,
     grid: str,
     logger: logging.Logger,
     limit_train_batches: Optional[Union[int, float]],
+    dataloader_workers: Optional[int],
     evaluation_workers: int,
     monitor_devices: bool,
     profiler: Optional[str],
@@ -2386,8 +2403,10 @@ def task_predictions(
             accelerator=accelerator,
             devices=devices,
             in_memory=in_memory,
+            pin_memory=pin_memory,
             deterministic=deterministic,
             limit_train_batches=limit_train_batches,
+            dataloader_workers=dataloader_workers,
             evaluation_workers=evaluation_workers,
             monitor_devices=monitor_devices,
             profiler=profiler,
@@ -2447,8 +2466,10 @@ def task_predictions(
             accelerator=accelerator,
             devices=devices,
             in_memory=in_memory,
+            pin_memory=pin_memory,
             deterministic=deterministic,
             limit_train_batches=limit_train_batches,
+            dataloader_workers=dataloader_workers,
             evaluation_workers=evaluation_workers,
             monitor_devices=monitor_devices,
             profiler=profiler,
@@ -2474,6 +2495,8 @@ def task_predictions(
             label_to_idx=label_to_idx,
             nlabels=nlabels,
             in_memory=in_memory,
+            pin_memory=pin_memory,
+            dataloader_workers=dataloader_workers,
         )
         # Cache predictions for detailed analysis
         prediction_file = embedding_path.joinpath(f"{test_fold_str}.predictions.pkl")
