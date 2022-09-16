@@ -1091,11 +1091,20 @@ class SplitMemmapDataset(Dataset):
             )
         )
         embedding_filename = embedding_path.joinpath(f"{split_name}.embeddings.npy")
+        
+
+        self.embeddings = np.memmap(
+            filename=embedding_filename,
+            dtype=np.float32,
+            mode="r",
+            shape=self.dim,
+        )
+
         if in_memory:
             self.embeddings = torch.stack(
                 [
                     torch.tensor(e) for e in tqdm(
-                        np.load(embedding_filename).astype(np.float32),
+                        self.embeddings,
                         desc="loading embeddings in-memory",
                     )
                 ]
@@ -1103,13 +1112,7 @@ class SplitMemmapDataset(Dataset):
             nandim = self.embeddings.isnan().sum().tolist()
             infdim = self.embeddings.isinf().sum().tolist()
             assert nandim == 0 and infdim == 0
-        else:
-            self.embeddings = np.memmap(
-                filename=embedding_filename,
-                dtype=np.float32,
-                mode="r",
-                shape=self.dim,
-            )
+           
 
         self.labels = pickle.load(
             open(embedding_path.joinpath(f"{split_name}.target-labels.pkl"), "rb")
