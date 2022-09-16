@@ -1988,8 +1988,8 @@ def task_predictions_train(
     if monitor_devices:
         callbacks.append((DeviceStatsMonitor, {}))
 
-    callbacks = construct_callbacks(callbacks)
-    checkpoint_callback: ModelCheckpoint = callbacks[0]
+    callbacks_objs = construct_callbacks(callbacks)
+    checkpoint_callback: ModelCheckpoint = callbacks_objs[0]
 
     logger_path = Path("logs").joinpath(embedding_path)
     logger = CSVLogger(logger_path)
@@ -2007,7 +2007,7 @@ def task_predictions_train(
         "limit_train_batches": limit_train_batches,
     }
     trainer = pl.Trainer(
-        callbacks=callbacks,
+        callbacks=callbacks_objs,
         logger=logger,
         **trainer_kwargs,
     )
