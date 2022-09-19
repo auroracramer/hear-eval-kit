@@ -1733,7 +1733,7 @@ def dataloader_from_dataset(
     # It is not recommended to return CUDA tensors using multi-processing
     # If automatic memory pinning is set to True then the num_workers should be zero
     # https://pytorch.org/docs/stable/data.html#single-and-multi-process-data-loading
-    if in_memory and not pin_memory:
+    if in_memory:
         if dataloader_workers is not None:
             num_workers = int(dataloader_workers / (max(1, torch.cuda.device_count())))
         else:
