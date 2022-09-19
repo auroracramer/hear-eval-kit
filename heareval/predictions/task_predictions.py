@@ -1756,6 +1756,7 @@ def dataloader_from_dataset(
         shuffle=shuffle,
         pin_memory=pin_memory,
         num_workers=num_workers,
+        persistent_workers=True,
     )
 
 
