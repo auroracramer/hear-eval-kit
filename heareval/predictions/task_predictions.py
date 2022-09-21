@@ -1098,7 +1098,7 @@ class SplitMemmapDataset(Dataset):
         if in_memory:
             self.embeddings = torch.stack(
                 [
-                    torch.tensor(e) for e in tqdm(
+                    torch.tensor(e.tolist()) for e in tqdm(
                         self.embeddings,
                         desc="loading embeddings in-memory",
                     )
