@@ -83,7 +83,7 @@ class BatchNorm1dSeq(torch.nn.BatchNorm1d):
 
 PRED_TYPE_SPECIFIC_PARAM_GRID = {
     "seld": {
-        "process_sequence": [False],
+        #"process_sequence": [False],
         # for specifying parameters that are coupled
         #"COUPLED_process_sequence": [
         #    {
@@ -95,6 +95,13 @@ PRED_TYPE_SPECIFIC_PARAM_GRID = {
         #        "hidden_norm": BatchNorm1dSeq,
         #    },
         #],
+        "COUPLED_process_sequence": [
+            {
+                "process_sequence": True,
+                "sequence_chunk_length": 100,
+                "hidden_norm": BatchNorm1dSeq,
+            },
+        ],
         # SELD eval is slow
         "check_val_every_n_epoch": [10],
     },
