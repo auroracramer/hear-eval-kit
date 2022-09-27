@@ -436,10 +436,10 @@ class Prediction(torch.nn.Module):
                 # Ignore hidden state from GRU output
                 hidden_modules.append(GetOutputAtIndex(0))
                 if not conf["norm_after_activation"]:
-                    hidden_modules.append(conf["hidden_norm"](conf["hidden_dim"]))
+                    hidden_modules.append(conf["hidden_norm"](2 * conf["hidden_dim"]))
                 hidden_modules.append(torch.nn.Tanh())
                 if conf["norm_after_activation"]:
-                    hidden_modules.append(conf["hidden_norm"](conf["hidden_dim"]))
+                    hidden_modules.append(conf["hidden_norm"](2 * conf["hidden_dim"]))
                 last_activation = "tanh"
                 curdim = 2 * conf["hidden_dim"]
             else:
