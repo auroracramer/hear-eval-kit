@@ -81,6 +81,16 @@ class BatchNorm1dSeq(torch.nn.BatchNorm1d):
         x = x.transpose(1, 2)
         return x
 
+
+class GetOutputAtIndex(torch.nn.Module):
+    def __init__(self, index):
+        super().__init__()
+        self._output_index = index
+
+    def forward(self, *outputs: List[torch.Tensor]):
+        return outputs[self._output_index]
+
+
 PRED_TYPE_SPECIFIC_PARAM_GRID = {
     "seld": {
         #"process_sequence": [False],
@@ -100,6 +110,7 @@ PRED_TYPE_SPECIFIC_PARAM_GRID = {
                 "process_sequence": True,
                 "sequence_chunk_length": 100,
                 "hidden_norm": BatchNorm1dSeq,
+                "hidden_layer_type": "gru",
             },
         ],
         # SELD eval is slow
@@ -109,6 +120,7 @@ PRED_TYPE_SPECIFIC_PARAM_GRID = {
 
 PARAM_GRID = {
     "hidden_layers": [1, 2],
+    "hidden_layer_type": ["linear"],
     # "hidden_layers": [0, 1, 2],
     # "hidden_layers": [1, 2, 3],
     "hidden_dim": [1024],
@@ -367,7 +379,7 @@ class ADPIT(pl.LightningModule):
         return loss
 
 
-class FullyConnectedPrediction(torch.nn.Module):
+class Prediction(torch.nn.Module):
     def __init__(
         self,
         nfeatures: int,
@@ -394,21 +406,46 @@ class FullyConnectedPrediction(torch.nn.Module):
         # us for the final embedding.
         last_activation = "linear"
         if conf["hidden_layers"]:
-            for i in range(conf["hidden_layers"]):
-                linear = torch.nn.Linear(curdim, conf["hidden_dim"])
-                conf["initialization"](
-                    linear.weight,
-                    gain=torch.nn.init.calculate_gain(last_activation),
+
+            if conf["hidden_layer_type"] == "linear":
+                for i in range(conf["hidden_layers"]):
+                    linear = torch.nn.Linear(curdim, conf["hidden_dim"])
+                    conf["initialization"](
+                        linear.weight,
+                        gain=torch.nn.init.calculate_gain(last_activation),
+                    )
+                    hidden_modules.append(linear)
+
+                    if not conf["norm_after_activation"]:
+                        hidden_modules.append(conf["hidden_norm"](conf["hidden_dim"]))
+                    hidden_modules.append(torch.nn.Dropout(conf["dropout"]))
+                    hidden_modules.append(torch.nn.ReLU())
+                    if conf["norm_after_activation"]:
+                        hidden_modules.append(conf["hidden_norm"](conf["hidden_dim"]))
+                    curdim = conf["hidden_dim"]
+                    last_activation = "relu"
+
+            elif conf["hidden_layer_type"] == "gru":
+                gru = torch.nn.GRU(
+                    input_size=curdim,
+                    hidden_size=conf["hidden_dim"],
+                    num_layers=conf["hidden_layers"], batch_first=True,
+                    dropout=conf["dropout"], bidirectional=True
                 )
-                hidden_modules.append(linear)
+                hidden_modules.append(gru)
+                # Ignore hidden state from GRU output
+                hidden_modules.append(GetOutputAtIndex(0))
                 if not conf["norm_after_activation"]:
                     hidden_modules.append(conf["hidden_norm"](conf["hidden_dim"]))
-                hidden_modules.append(torch.nn.Dropout(conf["dropout"]))
-                hidden_modules.append(torch.nn.ReLU())
+                hidden_modules.append(torch.nn.Tanh())
                 if conf["norm_after_activation"]:
                     hidden_modules.append(conf["hidden_norm"](conf["hidden_dim"]))
-                curdim = conf["hidden_dim"]
-                last_activation = "relu"
+                last_activation = "tanh"
+                curdim = 2 * conf["hidden_dim"]
+            else:
+                raise ValueError(
+                    f"Unsupported hidden layer type: {conf['hidden_layer_type']}"
+                )
 
             self.hidden = torch.nn.Sequential(*hidden_modules)
         else:
@@ -539,7 +576,7 @@ class AbstractPredictionModel(pl.LightningModule):
 
         # Since we don't know how these embeddings are scaled
         self.layernorm = conf["embedding_norm"](nfeatures)
-        self.predictor = FullyConnectedPrediction(
+        self.predictor = Prediction(
             nfeatures, nlabels, prediction_type, conf,
             nspatial=nspatial, ntracks=ntracks, nsublabels=nsublabels,
         )
