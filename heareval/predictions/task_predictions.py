@@ -223,7 +223,7 @@ PRED_TYPE_EVENT_POSTPROCESSING_GRID = {
 NUM_WORKERS = int(multiprocessing.cpu_count() / (max(1, torch.cuda.device_count())))
 
 
-class OneHotToCrossEntropyLoss(pl.LightningModule):
+class OneHotToCrossEntropyLoss(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.loss = torch.nn.CrossEntropyLoss()
@@ -250,7 +250,7 @@ def get_mask_from_nseq(X: torch.tensor, nseq: torch.Tensor, device: Any = None):
     return mask
 
 
-class ADPIT(pl.LightningModule):
+class ADPIT(torch.nn.Module):
     def __init__(
         self,
         nlabels: int,
