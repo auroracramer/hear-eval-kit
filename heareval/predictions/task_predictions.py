@@ -87,7 +87,7 @@ class GetOutputAtIndex(torch.nn.Module):
         super().__init__()
         self._output_index = index
 
-    def forward(self, *outputs: List[torch.Tensor]):
+    def forward(self, outputs: List[torch.Tensor]):
         return outputs[self._output_index]
 
 
