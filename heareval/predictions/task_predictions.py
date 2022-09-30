@@ -323,19 +323,19 @@ class ADPIT(torch.nn.Module):
             target_C1 = target[..., 4, :] # C1
             target_C2 = target[..., 5, :] # C2
 
-            target_A0A0A0 = torch.cat((target_A0, target_A0, target_A0), -2)  # 1 permutation of A (no ov from the same class), [batch_size, frames, num_track*num_axis=3*3, num_class=12]
-            target_B0B0B1 = torch.cat((target_B0, target_B0, target_B1), -2)  # 6 permutations of B (ov with 2 sources from the same class)
-            target_B0B1B0 = torch.cat((target_B0, target_B1, target_B0), -2)
-            target_B0B1B1 = torch.cat((target_B0, target_B1, target_B1), -2)
-            target_B1B0B0 = torch.cat((target_B1, target_B0, target_B0), -2)
-            target_B1B0B1 = torch.cat((target_B1, target_B0, target_B1), -2)
-            target_B1B1B0 = torch.cat((target_B1, target_B1, target_B0), -2)
-            target_C0C1C2 = torch.cat((target_C0, target_C1, target_C2), -2)  # 6 permutations of C (ov with 3 sources from the same class)
-            target_C0C2C1 = torch.cat((target_C0, target_C2, target_C1), -2)
-            target_C1C0C2 = torch.cat((target_C1, target_C0, target_C2), -2)
-            target_C1C2C0 = torch.cat((target_C1, target_C2, target_C0), -2)
-            target_C2C0C1 = torch.cat((target_C2, target_C0, target_C1), -2)
-            target_C2C1C0 = torch.cat((target_C2, target_C1, target_C0), -2)
+            target_A0A0A0 = torch.stack((target_A0, target_A0, target_A0), -2)  # 1 permutation of A (no ov from the same class), [batch_size, frames, num_track*num_axis=3*3, num_class=12]
+            target_B0B0B1 = torch.stack((target_B0, target_B0, target_B1), -2)  # 6 permutations of B (ov with 2 sources from the same class)
+            target_B0B1B0 = torch.stack((target_B0, target_B1, target_B0), -2)
+            target_B0B1B1 = torch.stack((target_B0, target_B1, target_B1), -2)
+            target_B1B0B0 = torch.stack((target_B1, target_B0, target_B0), -2)
+            target_B1B0B1 = torch.stack((target_B1, target_B0, target_B1), -2)
+            target_B1B1B0 = torch.stack((target_B1, target_B1, target_B0), -2)
+            target_C0C1C2 = torch.stack((target_C0, target_C1, target_C2), -2)  # 6 permutations of C (ov with 3 sources from the same class)
+            target_C0C2C1 = torch.stack((target_C0, target_C2, target_C1), -2)
+            target_C1C0C2 = torch.stack((target_C1, target_C0, target_C2), -2)
+            target_C1C2C0 = torch.stack((target_C1, target_C2, target_C0), -2)
+            target_C2C0C1 = torch.stack((target_C2, target_C0, target_C1), -2)
+            target_C2C1C0 = torch.stack((target_C2, target_C1, target_C0), -2)
 
             pad4A = target_B0B0B1 + target_C0C1C2
             pad4B = target_A0A0A0 + target_C0C1C2
