@@ -989,7 +989,7 @@ class EventPredictionModel(AbstractPredictionModel):
                 # This is a list of string, not tensor, so we don't need to stack it
                 dont_stack=["filename"],
             )
-            raw_target, _prediction, raw_prediction_logit, _filename, _timestamp_lists, _nseq, _chunk_idx = (
+            raw_target, _prediction, raw_prediction_logit, _filename, _timestamp_lists, nseq, _chunk_idx = (
                 flat_outputs[key]
                 for key in keys
             )
@@ -998,7 +998,7 @@ class EventPredictionModel(AbstractPredictionModel):
 
             # Convert to numpy to avoid memory access issues
             _timestamp_lists = _timestamp_lists.detach().cpu().numpy()
-            _nseq = _nseq.detach().cpu().numpy()
+            _nseq = nseq.detach().cpu().numpy()
             _chunk_idx = _chunk_idx.detach().cpu().numpy()
 
             assert raw_target.shape[1] == _prediction.shape[1]
@@ -1055,15 +1055,16 @@ class EventPredictionModel(AbstractPredictionModel):
 
             raw_target = target
             raw_prediction_logit = prediction_logit
+            nseq = None
 
         self.log(
             f"{name}_loss",
-            self.predictor.loss(raw_prediction_logit, raw_target).detach(),
+            self.predictor.compute_loss(raw_prediction_logit, raw_target, nseq=nseq).detach(),
             prog_bar=True,
             logger=True,
         )
         # Help out garbage collection
-        raw_prediction_logit = raw_target = None
+        raw_prediction_logit = raw_target = nseq = None
 
         epoch = self.current_epoch
         if name == "val":
