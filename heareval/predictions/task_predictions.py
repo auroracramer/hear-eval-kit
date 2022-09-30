@@ -111,7 +111,7 @@ PRED_TYPE_SPECIFIC_PARAM_GRID = {
                 "sequence_chunk_length": 100,
                 "hidden_norm": BatchNorm1dSeq,
                 "hidden_layer_type": "gru",
-                "batch_size": 128,
+                "batch_size": 8,
             },
         ],
         # SELD eval is slow
