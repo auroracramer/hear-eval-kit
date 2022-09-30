@@ -313,69 +313,144 @@ class ADPIT(torch.nn.Module):
         # Mask spatial dimension by activity
         target = target[..., 0:1] * target[..., 1:]
 
-        ninsts_perm_targets = []
-        for ninsts in range(1, self.ntracks + 1):
-            nrep = self.ntracks - ninsts
-            base_idxs = tuple(range(ninsts))
-            curr_track_idxs = set()
-            # Get all unique permutations of track idxs including at least one
-            # occurrence of each active instance
-            for extra_idxs in product(base_idxs, repeat=nrep):
-                curr_track_idxs.update(permutations(base_idxs + extra_idxs, self.ntracks))
+        if self.ntracks == 3:
+            # Hardcoded special case for speed
+            # Copied from https://github.com/sharathadavanne/seld-dcase2022/blob/main/seldnet_model.py
+            target_A0 = target[..., 0, :] # A0, no ov from the same class, [batch_size, frames, num_axis(act)=1, num_class=12] * [batch_size, frames, num_axis(XYZ)=3, num_class=12]
+            target_B0 = target[..., 1, :] # B0, ov with 2 sources from the same class
+            target_B1 = target[..., 2, :] # B1
+            target_C0 = target[..., 3, :] # C0, ov with 3 sources from the same class
+            target_C1 = target[..., 4, :] # C1
+            target_C2 = target[..., 5, :] # C2
 
-            # Sort so we can easily get first occurrence
-            curr_track_idxs = sorted(curr_track_idxs)
+            target_A0A0A0 = torch.cat((target_A0, target_A0, target_A0), -2)  # 1 permutation of A (no ov from the same class), [batch_size, frames, num_track*num_axis=3*3, num_class=12]
+            target_B0B0B1 = torch.cat((target_B0, target_B0, target_B1), -2)  # 6 permutations of B (ov with 2 sources from the same class)
+            target_B0B1B0 = torch.cat((target_B0, target_B1, target_B0), -2)
+            target_B0B1B1 = torch.cat((target_B0, target_B1, target_B1), -2)
+            target_B1B0B0 = torch.cat((target_B1, target_B0, target_B0), -2)
+            target_B1B0B1 = torch.cat((target_B1, target_B0, target_B1), -2)
+            target_B1B1B0 = torch.cat((target_B1, target_B1, target_B0), -2)
+            target_C0C1C2 = torch.cat((target_C0, target_C1, target_C2), -2)  # 6 permutations of C (ov with 3 sources from the same class)
+            target_C0C2C1 = torch.cat((target_C0, target_C2, target_C1), -2)
+            target_C1C0C2 = torch.cat((target_C1, target_C0, target_C2), -2)
+            target_C1C2C0 = torch.cat((target_C1, target_C2, target_C0), -2)
+            target_C2C0C1 = torch.cat((target_C2, target_C0, target_C1), -2)
+            target_C2C1C0 = torch.cat((target_C2, target_C1, target_C0), -2)
 
-            # Compute offset corresponding to the number of instances
-            start_idx = (ninsts * (ninsts - 1)) // 2
+            pad4A = target_B0B0B1 + target_C0C1C2
+            pad4B = target_A0A0A0 + target_C0C1C2
+            pad4C = target_A0A0A0 + target_B0B0B1
+            #loss = self.compute_base_loss(pred, perm_target + padding, mask=mask)
+            loss_0  = self.compute_base_loss(pred, target_A0A0A0 + pad4A, mask=mask)  # padded with target_B0B0B1 and target_C0C1C2 in order to avoid to set zero as target
+            loss_1  = self.compute_base_loss(pred, target_B0B0B1 + pad4B, mask=mask)  # padded with target_A0A0A0 and target_C0C1C2
+            loss_2  = self.compute_base_loss(pred, target_B0B1B0 + pad4B, mask=mask)
+            loss_3  = self.compute_base_loss(pred, target_B0B1B1 + pad4B, mask=mask)
+            loss_4  = self.compute_base_loss(pred, target_B1B0B0 + pad4B, mask=mask)
+            loss_5  = self.compute_base_loss(pred, target_B1B0B1 + pad4B, mask=mask)
+            loss_6  = self.compute_base_loss(pred, target_B1B1B0 + pad4B, mask=mask)
+            loss_7  = self.compute_base_loss(pred, target_C0C1C2 + pad4C, mask=mask)  # padded with target_A0A0A0 and target_B0B0B1
+            loss_8  = self.compute_base_loss(pred, target_C0C2C1 + pad4C, mask=mask)
+            loss_9  = self.compute_base_loss(pred, target_C1C0C2 + pad4C, mask=mask)
+            loss_10 = self.compute_base_loss(pred, target_C1C2C0 + pad4C, mask=mask)
+            loss_11 = self.compute_base_loss(pred, target_C2C0C1 + pad4C, mask=mask)
+            loss_12 = self.compute_base_loss(pred, target_C2C1C0 + pad4C, mask=mask)
 
-            curr_perm_targets = []
-            for perm in curr_track_idxs:
-                # Add offset to idxs
-                perm = tuple(x + start_idx for x in perm)
-                perm_target = target[..., perm, :]
-                assert perm_target.shape == pred.shape
-                curr_perm_targets.append(perm_target)
+            loss_min = torch.min(
+                torch.stack(
+                    (
+                        loss_0, loss_1, loss_2, loss_3, loss_4, loss_5, loss_6,
+                        loss_7, loss_8, loss_9, loss_10, loss_11, loss_12,
+                    ),
+                    dim=0,
+                ),
+                dim=0,
+            ).indices
 
-            ninsts_perm_targets.append(curr_perm_targets)
+            loss = (loss_0 * (loss_min == 0) +
+                    loss_1 * (loss_min == 1) +
+                    loss_2 * (loss_min == 2) +
+                    loss_3 * (loss_min == 3) +
+                    loss_4 * (loss_min == 4) +
+                    loss_5 * (loss_min == 5) +
+                    loss_6 * (loss_min == 6) +
+                    loss_7 * (loss_min == 7) +
+                    loss_8 * (loss_min == 8) +
+                    loss_9 * (loss_min == 9) +
+                    loss_10 * (loss_min == 10) +
+                    loss_11 * (loss_min == 11) +
+                    loss_12 * (loss_min == 12)).mean()
 
-        losses = []
-        for ninsts_m1, curr_perm_targets in enumerate(ninsts_perm_targets):
-            ninsts = ninsts_m1 + 1
-            # "Pad" each permutation loss to avoid choosing an invalid
-            # permutation with zero loss
-            # https://stackoverflow.com/a/61774748
-            padding = reduce(
+        else:
+            # More general case
+            ninsts_perm_targets = []
+            for ninsts in range(1, self.ntracks + 1):
+                # ninsts -> number of class occurrences
+                nrep = self.ntracks - ninsts
+                # nrep -> number of repetitions of any occurrence
+                base_idxs = tuple(range(ninsts))
+                # base_idxs -> set of "original" instances
+                curr_track_idxs = set()
+                # Get all unique permutations of track idxs including at least one
+                # occurrence of each active instance
+                for extra_idxs in product(base_idxs, repeat=nrep):
+                    # extra_idxs -> nrep repeats of any of the base_idxs
+                    # update curr_idxs with all permutations
+                    # TODO: is there a more efficient way to do this?
+                    curr_track_idxs.update(permutations(base_idxs + extra_idxs, self.ntracks))
+
+                # Sort so we can easily get first occurrence
+                curr_track_idxs = sorted(curr_track_idxs)
+
+                # Compute offset corresponding to the number of instances
+                start_idx = (ninsts * (ninsts - 1)) // 2
+
+                curr_perm_targets = []
+                for perm in curr_track_idxs:
+                    # Add offset to idxs
+                    perm = tuple(x + start_idx for x in perm)
+                    perm_target = target[..., perm, :]
+                    assert perm_target.shape == pred.shape
+                    curr_perm_targets.append(perm_target)
+
+                ninsts_perm_targets.append(curr_perm_targets)
+
+            losses = []
+            for ninsts_m1, curr_perm_targets in enumerate(ninsts_perm_targets):
+                ninsts = ninsts_m1 + 1
+                # "Pad" each permutation loss to avoid choosing an invalid
+                # permutation with zero loss
+                # https://stackoverflow.com/a/61774748
+                padding = reduce(
+                    torch.Tensor.add_,
+                    [
+                        other_perm_targets[0]
+                        for idx, other_perm_targets in enumerate(ninsts_perm_targets)
+                        if idx != ninsts_m1
+                    ],
+                    torch.zeros_like(curr_perm_targets[0]),
+                )
+                assert padding.shape == pred.shape
+
+                # Compute loss for each permutation target
+                for perm_target in curr_perm_targets:
+                    assert perm_target.shape == pred.shape
+                    loss = self.compute_base_loss(pred, perm_target + padding, mask=mask)
+                    losses.append(loss)
+
+            # Get indices of minimum loss for each batch/class
+            loss_min = torch.min(
+                torch.stack(losses, dim=0),
+            dim=0).indices
+
+            # Mask losses to obtain the minimum losses and average them
+            loss = reduce(
                 torch.Tensor.add_,
                 [
-                    other_perm_targets[0]
-                    for idx, other_perm_targets in enumerate(ninsts_perm_targets)
-                    if idx != ninsts_m1
+                    perm_loss * (loss_min == perm_idx)
+                    for perm_idx, perm_loss in enumerate(losses)
                 ],
-                torch.zeros_like(curr_perm_targets[0]),
-            )
-            assert padding.shape == pred.shape
-
-            # Compute loss for each permutation target
-            for perm_target in curr_perm_targets:
-                assert perm_target.shape == pred.shape
-                loss = self.compute_base_loss(pred, perm_target + padding, mask=mask)
-                losses.append(loss)
-
-        # Get indices of minimum loss for each batch/class
-        loss_min = torch.min(
-            torch.stack(losses, dim=0),
-        dim=0).indices
-
-        # Mask losses to obtain the minimum losses and average them
-        loss = reduce(
-            torch.Tensor.add_,
-            [
-                perm_loss * (loss_min == perm_idx)
-                for perm_idx, perm_loss in enumerate(losses)
-            ],
-            torch.zeros_like(losses[0]),
-        ).mean()
+                torch.zeros_like(losses[0]),
+            ).mean()
 
         return loss
 
