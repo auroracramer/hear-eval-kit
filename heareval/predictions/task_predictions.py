@@ -244,10 +244,10 @@ def get_mask_from_nseq(X: torch.tensor, nseq: torch.Tensor):
     assert nseq.shape[0] == nbatch
     # Create mask from nseq
     # https://stackoverflow.com/a/53403392
-    mask = torch.arange(nframes).type_as(X).expand(nbatch, nframes) < nseq.unsqueeze(1)
+    mask = torch.arange(nframes, device=X.device, dtype=X.dtype).expand(nbatch, nframes) < nseq.unsqueeze(1)
     # Add singleton dimensions to expand to loss shape
     # https://github.com/pytorch/pytorch/issues/9410#issuecomment-552786888
-    mask = mask[(...,) + (None,) * (X.ndim - mask.ndim)] 
+    mask = mask.view(*mask.shape, *((1,) * (X.ndim - mask.ndim)))
     return mask
 
 
