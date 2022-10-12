@@ -306,7 +306,7 @@ class ADPIT(torch.nn.Module):
         # Mask spatial dimension by activity
         target = target[..., 0:1] * target[..., 1:]
 
-        if self.ntracks == 3:
+        if False: #self.ntracks == 3:
             # Hardcoded special case for speed
             # Copied from https://github.com/sharathadavanne/seld-dcase2022/blob/main/seldnet_model.py
             target_A0 = target[..., 0, :] # A0, no ov from the same class, [batch_size, frames, num_axis(act)=1, num_class=12] * [batch_size, frames, num_axis(XYZ)=3, num_class=12]
