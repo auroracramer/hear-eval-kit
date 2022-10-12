@@ -17,6 +17,7 @@ import copy
 import json
 import logging
 import multiprocessing
+import hashlib
 import pickle
 import random
 import sys
@@ -1784,6 +1785,7 @@ def task_predictions_train(
     scores: List[str],
     conf: Dict,
     use_scoring_for_early_stopping: bool,
+    train_id: str,
     accelerator: str,
     devices: int,
     in_memory: bool,
@@ -1892,11 +1894,28 @@ def task_predictions_train(
         target_score = "val_loss"
         mode = "min"
 
+    ckpt_dir = embedding_path.joinpath(train_id)
+    ckpt_dir.mkdir(exist_ok=True)
+    done_file = ckpt_dir.joinpath("grid_point_result.pkl")
+    if done_file.exists():
+        # If the grid point result already exists, load it and return it
+        with done_file.open('rb') as fh:
+            result = pickle.load(fh)
+        return result
+    else:
+        ckpt_list = list(ckpt_dir.glob('*.ckpt'))
+        ckpt_path = None
+        if ckpt_list:
+            # If an existing checkpoint exists, start load it
+            ckpt_path = max(ckpt_list, key=os.path.getmtime)
+            print(f"Continuing from existing checkpoint: {ckpt_path}")
+
     # Set up callbacks in a way that can be reconstructed easily
     callbacks = [
         (
             ModelCheckpoint,
             {
+                "dirname": ckpt_dir,
                 "monitor": target_score,
                 "mode": mode,
             },
@@ -1955,7 +1974,12 @@ def task_predictions_train(
         batch_size=conf["batch_size"],
         dataloader_workers=dataloader_workers,
     )
-    trainer.fit(predictor, train_dataloader, valid_dataloader)
+    trainer.fit(
+        predictor,
+        train_dataloader,
+        valid_dataloader,
+        ckpt_path=ckpt_path,
+    )
     # Help out garbage collection
     trainer = train_dataloader = valid_dataloader = None
     if checkpoint_callback.best_model_score is not None:
@@ -1971,7 +1995,7 @@ def task_predictions_train(
         logger.log_metrics({"time_in_min": time_in_min})
         logger.finalize("success")
         logger.save()
-        return GridPointResult(
+        result = GridPointResult(
             predictor=predictor,
             model_path=checkpoint_callback.best_model_path,
             epoch=epoch,
@@ -1988,6 +2012,9 @@ def task_predictions_train(
                 "evaluation_workers": evaluation_workers,
             }
         )
+        with done_file.open('wb') as fh:
+            pickle.dump(result, fh)
+        return result
     else:
         raise ValueError(
             f"No score {checkpoint_callback.best_model_score} for this model"
@@ -2198,6 +2225,12 @@ def print_scores(
         print(f"Grid Point Summary: {g}")
 
 
+def get_train_id(conf, split):
+    return hashlib.md5(
+        json.dumps(conf).encode() + json.dumps(split).encode()
+    ).hexdigest()
+
+
 def task_predictions(
     embedding_path: Path,
     embedding_size: int,
@@ -2313,7 +2346,8 @@ def task_predictions(
                 print("*** Reusing datasets ***")
 
 
-        logger.info(f"Grid point {confi+1} of {grid_points}: {conf}")
+        train_id = get_train_id(conf, data_splits[0])
+        logger.info(f"Grid point {confi+1} ({train_id}) of {grid_points}: {conf}")
         grid_point_result = task_predictions_train(
             embedding_path=embedding_path,
             embedding_size=embedding_size,
@@ -2326,6 +2360,7 @@ def task_predictions(
             scores=metadata["evaluation"],
             conf=conf,
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
+            train_id=train_id,
             accelerator=accelerator,
             devices=devices,
             in_memory=in_memory,
@@ -2376,6 +2411,7 @@ def task_predictions(
             metadata=False,
             **dataset_kwargs,
         )
+        train_id = get_train_id(conf, split)
         logger.info(f"Training split {spliti+2} of {len(data_splits)}: {split}")
         grid_point_result = task_predictions_train(
             embedding_path=embedding_path,
@@ -2389,6 +2425,7 @@ def task_predictions(
             scores=metadata["evaluation"],
             conf=best_grid_point.conf,
             use_scoring_for_early_stopping=use_scoring_for_early_stopping,
+            train_id=train_id,
             accelerator=accelerator,
             devices=devices,
             in_memory=in_memory,
