@@ -2227,7 +2227,7 @@ def print_scores(
 
 def get_train_id(conf, split):
     return hashlib.md5(
-        json.dumps(conf).encode() + json.dumps(split).encode()
+        json.dumps(hparams_to_json(conf)).encode() + json.dumps(split).encode()
     ).hexdigest()
 
 
