@@ -2283,7 +2283,12 @@ def task_predictions(
 
     grid_point_results = []
     for confi, conf in tqdm(
-        enumerate(confs[:grid_points]),
+        enumerate(sorted(confs[:grid_points], key=(
+            # Sort by dataset kwargs to reduce dataset loading overhead
+            lambda x : tuple(get_dataset_kwargs(
+                embedding_path, label_to_idx, nlabels, in_memory, metadata, x,
+            ).items())
+        ))),
         desc="hyperparameter search grid",
     ):
         # Update chosen coupled parameter configurations
