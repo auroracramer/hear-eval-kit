@@ -93,29 +93,21 @@ class GetOutputAtIndex(torch.nn.Module):
 
 PRED_TYPE_SPECIFIC_PARAM_GRID = {
     "seld": {
-        #"process_sequence": [False],
-        # for specifying parameters that are coupled
-        #"COUPLED_process_sequence": [
-        #    {
-        #        "process_sequence": False,
-        #    },
-        #    {
-        #        "process_sequence": True,
-        #        "sequence_chunk_length": 5,
-        #        "hidden_norm": BatchNorm1dSeq,
-        #    },
-        #],
+        # SELD eval is slow
+        "check_val_every_n_epoch": [40],
         "COUPLED_process_sequence": [
+            {
+                "process_sequence": False,
+                "batch_size": 65536,
+            },
             {
                 "process_sequence": True,
                 "sequence_chunk_length": 100,
                 "hidden_norm": BatchNorm1dSeq,
                 "hidden_layer_type": "gru",
-                "batch_size": 8,
+                "batch_size": 128,
             },
         ],
-        # SELD eval is slow
-        "check_val_every_n_epoch": [10],
     },
 }
 
@@ -194,14 +186,14 @@ DEBUG_PARAM_GRID.update(
 MAXGPU_PARAM_GRID = copy.deepcopy(PARAM_GRID)
 MAXGPU_PARAM_GRID.update(
     {
-        "batch_size": [480000],
+        "batch_size": [480400],
     }
 )
 
 DEBUGMAXGPU_PARAM_GRID = copy.deepcopy(DEBUG_PARAM_GRID)
 DEBUGMAXGPU_PARAM_GRID.update(
     {
-        "batch_size": [480000],
+        "batch_size": [480400],
     }
 )
 
