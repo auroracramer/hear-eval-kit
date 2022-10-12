@@ -1915,7 +1915,7 @@ def task_predictions_train(
         (
             ModelCheckpoint,
             {
-                "dirname": ckpt_dir,
+                "dirpath": ckpt_dir,
                 "monitor": target_score,
                 "mode": mode,
             },
