@@ -1894,7 +1894,7 @@ def task_predictions_train(
         target_score = "val_loss"
         mode = "min"
 
-    ckpt_dir = embedding_path.joinpath(train_id)
+    ckpt_dir = embedding_path.joinpath("model_checkpoints", train_id)
     ckpt_dir.mkdir(exist_ok=True)
     done_file = ckpt_dir.joinpath("grid_point_result.pkl")
     if done_file.exists():
