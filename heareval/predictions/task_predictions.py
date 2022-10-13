@@ -152,6 +152,12 @@ PARAM_GRID = {
     # "optim": [torch.optim.Adam, torch.optim.SGD],
 }
 
+REDUCED_PARAM_GRID = copy.deepcopy(PARAM_GRID)
+REDUCED_PARAM_GRID.update({
+    "hidden_layers": [2],
+    "initialization": [torch.nn.init.xavier_uniform_],
+})
+
 FAST_PARAM_GRID = copy.deepcopy(PARAM_GRID)
 FAST_PARAM_GRID.update(
     {
@@ -2276,6 +2282,8 @@ def task_predictions(
     # Construct the grid points for model creation
     if grid == "default":
         final_grid = copy.copy(PARAM_GRID)
+    elif grid == "reduced":
+        final_grid = copy.copy(REDUCED_PARAM_GRID)
     elif grid == "fast":
         final_grid = copy.copy(FAST_PARAM_GRID)
     elif grid == "faster":

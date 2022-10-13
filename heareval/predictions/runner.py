@@ -101,7 +101,7 @@ def get_logger(task_name: str, log_path: Path) -> logging.Logger:
 @click.option(
     "--grid",
     default="default",
-    help='Grid to use: ["default", "fast", "faster", "debug", "maxgpu", "debugmaxgpu"]',
+    help='Grid to use: ["default", "reduced", "fast", "faster", "debug", "maxgpu", "debugmaxgpu"]',
     type=str,
 )
 @click.option(
