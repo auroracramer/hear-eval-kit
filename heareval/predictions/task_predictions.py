@@ -1901,7 +1901,7 @@ def task_predictions_train(
         mode = "min"
 
     ckpt_dir = embedding_path.joinpath("model_checkpoints", train_id)
-    ckpt_dir.mkdir(exist_ok=True)
+    ckpt_dir.mkdir(exist_ok=True, parents=True)
     done_file = ckpt_dir.joinpath("grid_point_result.pkl")
     if done_file.exists():
         # If the grid point result already exists, load it and return it
