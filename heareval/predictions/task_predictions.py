@@ -2401,18 +2401,9 @@ def task_predictions(
             embedding_path, label_to_idx, nlabels,
             in_memory, metadata, conf
         )
-        train_dataset = dataset_from_split_name(
-            split_name=split["train"],
-            metadata=False,
-            **dataset_kwargs,
-        )
-        valid_dataset = dataset_from_split_name(
-            split_name=split["valid"],
-            metadata=False,
-            **dataset_kwargs,
-        )
+        train_dataset, valid_dataset = get_train_valid_datasets(split, dataset_kwargs)
         train_id = get_train_id(conf, split)
-        logger.info(f"Training split {spliti+2} of {len(data_splits)}: {split}")
+        logger.info(f"Training split {spliti+2} of {len(data_splits)} ({train_id}): {split}")
         grid_point_result = task_predictions_train(
             embedding_path=embedding_path,
             embedding_size=embedding_size,
