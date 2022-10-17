@@ -99,7 +99,7 @@ PRED_TYPE_SPECIFIC_PARAM_GRID = {
         "COUPLED_process_sequence": [
             {
                 "process_sequence": False,
-                "batch_size": 16384,
+                "batch_size": 32768,
             },
             {
                 "process_sequence": True,
