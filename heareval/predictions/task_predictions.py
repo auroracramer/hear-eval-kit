@@ -96,19 +96,11 @@ PRED_TYPE_SPECIFIC_PARAM_GRID = {
     "seld": {
         # SELD eval is slow
         "check_val_every_n_epoch": [40],
-        "COUPLED_process_sequence": [
-            {
-                "process_sequence": False,
-                "batch_size": 480400,
-            },
-            {
-                "process_sequence": True,
-                "sequence_chunk_length": 100,
-                "hidden_norm": BatchNorm1dSeq,
-                "hidden_layer_type": "gru",
-                "batch_size": 16,
-            },
-        ],
+        "process_sequence": [True],
+        "sequence_chunk_length": [100],
+        "hidden_norm": [BatchNorm1dSeq],
+        "hidden_layer_type": ["gru"],
+        "batch_size": [16],
     },
 }
 
