@@ -102,6 +102,14 @@ PRED_TYPE_SPECIFIC_PARAM_GRID = {
         "hidden_layer_type": ["gru"],
         "batch_size": [16],
     },
+    "avoseld_multiregion": {
+        "process_sequence": [True],
+        "sequence_chunk_length": [100],
+        "hidden_norm": [BatchNorm1dSeq],
+        "hidden_layer_type": ["gru"],
+        "batch_size": [16],
+
+    }
 }
 
 PARAM_GRID = {
