@@ -2069,15 +2069,20 @@ def task_predictions_test(
     return test_results
 
 
-def serialize_value(v):
-    if isinstance(v, str) or isinstance(v, float) or isinstance(v, int):
-        return v
+def serializable_value(val):
+    if isinstance(val, str) or isinstance(val, float) or isinstance(val, int):
+        return val
+    elif isinstance(val, dict):
+        return {serializable_value(k): serializable_value(v) for k, v in val.items()}
+    elif isinstance(val, List):
+        return [serializable_value(v) for v in val]
     else:
-        return str(v)
+        # Omit memory address
+        return str(val).replace(f" at {hex(id(val))}", "")
 
 
 def hparams_to_json(hparams):
-    return {k: serialize_value(v) for k, v in hparams.items()}
+    return {k: serializable_value(v) for k, v in hparams.items()}
 
 
 def data_splits_from_folds(folds: List[str]) -> List[Dict[str, List[str]]]:
@@ -2233,7 +2238,7 @@ def print_scores(
 
 def get_train_id(conf, split):
     return hashlib.md5(
-        json.dumps(hparams_to_json(conf)).encode() + json.dumps(split).encode()
+        json.dumps(hparams_to_json(conf), sort_keys=True).encode() + json.dumps(split, sort_keys=True).encode()
     ).hexdigest()
 
 
