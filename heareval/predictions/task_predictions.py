@@ -224,9 +224,9 @@ NUM_WORKERS = int(multiprocessing.cpu_count() / (max(1, torch.cuda.device_count(
 
 
 class OneHotToCrossEntropyLoss(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         super().__init__()
-        self.loss = torch.nn.CrossEntropyLoss()
+        self.loss = torch.nn.CrossEntropyLoss(*args, **kwargs)
 
     def forward(self, y_hat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         # One and only one label per class
@@ -301,6 +301,7 @@ class ADPIT(torch.nn.Module):
 
         if nseq is not None:
             assert self.process_sequence
+            # TODO rename uses of mask to sequence mask or something to avoid confusion
             mask = get_mask_from_nseq(pred, nseq)
         else:
             mask = None
@@ -543,15 +544,16 @@ class Prediction(torch.nn.Module):
             self.projection.weight, gain=torch.nn.init.calculate_gain(last_activation)
         )
 
+        reduction = "none" if self.process_sequence else "mean"
         # Define activations and losses
         self.activation: torch.nn.Module
         self.loss: torch.nn.Module
         if prediction_type == "multilabel":
             self.activation = torch.nn.Sigmoid()
-            self.loss = torch.nn.BCEWithLogitsLoss()
+            self.loss = torch.nn.BCEWithLogitsLoss(reduction=reduction)
         elif prediction_type == "multiclass":
             self.activation = torch.nn.Softmax()
-            self.loss = OneHotToCrossEntropyLoss()
+            self.loss = OneHotToCrossEntropyLoss(reduction=reduction)
         elif prediction_type == "seld":
             if self.multitrack:
                 self.loss = ADPIT(
@@ -560,11 +562,11 @@ class Prediction(torch.nn.Module):
                     process_sequence=self.process_sequence,
                 )
             else:
-                self.loss = torch.nn.MSELOSS()
+                self.loss = torch.nn.MSELOSS(reduction=reduction)
             self.activation = torch.nn.Tanh()
         elif prediction_type == "avoseld_multiregion":
             self.activation = torch.nn.Sigmoid()
-            self.loss = torch.nn.BCEWithLogitsLoss()
+            self.loss = torch.nn.BCEWithLogitsLoss(reduction=reduction)
         else:
             raise ValueError(f"Unknown prediction_type {prediction_type}")
 
@@ -620,10 +622,12 @@ class Prediction(torch.nn.Module):
             if isinstance(self.loss, ADPIT):
                 return self.loss(pred, target, nseq=nseq)
             else:
-                raise ValueError(
-                    f"Loss masking by nseq is not supported for loss"
-                    f" '{type(self.loss).__name__}'"
-                )
+                loss = self.loss(pred, target, nseq=nseq)
+                mask = get_mask_from_nseq(pred, nseq)
+                loss = (loss * mask).sum(dim=1) / mask.sum(dim=1)
+                return loss.mean()
+        elif self.process_sequence and nseq is None:
+            return self.loss(pred, target).mean()
         else:
             return self.loss(pred, target)
 
