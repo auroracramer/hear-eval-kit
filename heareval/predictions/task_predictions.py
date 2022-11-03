@@ -622,7 +622,7 @@ class Prediction(torch.nn.Module):
             if isinstance(self.loss, ADPIT):
                 return self.loss(pred, target, nseq=nseq)
             else:
-                loss = self.loss(pred, target, nseq=nseq)
+                loss = self.loss(pred, target)
                 mask = get_mask_from_nseq(pred, nseq)
                 loss = (loss * mask).sum(dim=1) / mask.sum(dim=1)
                 return loss.mean()
