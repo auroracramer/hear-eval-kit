@@ -2327,9 +2327,11 @@ def task_predictions(
     # Model selection
     confs = list(ParameterGrid(final_grid))
     random.shuffle(confs)
+    grid_points = min(len(confs), grid_points)
 
     dataset_kwargs = None
     train_dataset, valid_dataset = None, None
+
 
     grid_point_results = []
     for confi, conf in tqdm(
