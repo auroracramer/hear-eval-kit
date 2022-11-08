@@ -684,6 +684,7 @@ class AbstractPredictionModel(pl.LightningModule):
     def set_test_predictions_path(self, path):
         self.test_predictions_path = path
         if not os.path.exists(self.test_predictions_path):
+            Path(self.test_predictions_path).parent.mkdir(exist_ok=True, parents=True)
             Path(self.test_predictions_path).touch()
 
     def save_test_predictions(self, test_predictions):
