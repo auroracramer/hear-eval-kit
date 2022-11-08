@@ -526,8 +526,20 @@ def task_embeddings(
             os.makedirs(outdir)
 
         for audios, filenames in tqdm(dataloader, desc="computing embeddings and targets for each file"):
+            # Check for existing output files
+            embedding_done = timestamps_done = labels_done = spatial_done = True
+            for file in enumerate(filenames):
+                out_file = outdir.joinpath(f"{file}")
+                embedding_done = embedding_done and os.path.exists(f"{out_file}.embedding.npy")
+                timestamps_done = timestamps_done and os.path.exists(f"{out_file}.timestamps.json")
+                labels_done = labels_done and os.path.exists(f"{out_file}.target-labels.json")
+                spatial_done = spatial_done and os.path.exists(f"{out_file}.target-spatial.json")
+
             file_data_list = [split_data[file] for file in filenames]
             if metadata["embedding_type"] == "scene":
+                if embedding_done and labels_done:
+                    print(f"!!! outputs exist for {str(list(filenames))}, not skipping")
+                    continue
                 labels = file_data_list
                 embeddings = embedding.get_scene_embedding_as_numpy(audios)
                 save_scene_embedding_and_labels(embeddings, labels, filenames, outdir)
@@ -538,6 +550,9 @@ def task_embeddings(
                     audios
                 )
                 if metadata["prediction_type"] == "seld":
+                    if embedding_done and timestamps_done and labels_done and spatial_done:
+                        print(f"!!! outputs exist for {str(list(filenames))}, not skipping")
+                        continue
                     labels, spatial = get_labels_and_spatial_for_timestamps(
                         file_data_list, timestamps,
                         spatial_projection=metadata["spatial_projection"],
@@ -552,6 +567,9 @@ def task_embeddings(
                         embeddings, timestamps, labels, spatial, filenames, outdir
                     )
                 elif metadata["prediction_type"] == "avoseld_multiregion":
+                    if embedding_done and timestamps_done and labels_done and spatial_done:
+                        print(f"!!! outputs exist for {str(list(filenames))}, not skipping")
+                        continue
                     labels, spatial = get_labels_and_spatial_for_timestamps(
                         file_data_list, timestamps,
                         spatial_projection=metadata["spatial_projection"],
@@ -565,6 +583,9 @@ def task_embeddings(
                         embeddings, timestamps, labels, spatial, filenames, outdir
                     )
                 else:
+                    if embedding_done and timestamps_done and labels_done:
+                        print(f"!!! outputs exist for {str(list(filenames))}, not skipping")
+                        continue
                     labels = get_labels_for_timestamps(
                         labels, timestamps,
                         ntracks=(
