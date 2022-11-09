@@ -50,6 +50,12 @@ if torch.cuda.is_available() and not tf.test.is_gpu_available(
 @click.option(
     "--model-options", default="{}", help="A JSON dict of kwargs to pass to load_model"
 )
+@click.option(
+    "--overwrite-incomplete",
+    default=False,
+    help="If True, recomputes incomplete outputs. (Default: True)",
+    type=click.BOOL,
+)
 def runner(
     module: str,
     model: str = None,
@@ -57,6 +63,7 @@ def runner(
     task: str = "tasks",
     embeddings_dir: str = "embeddings",
     model_options: str = "{}",
+    overwrite_incomplete: bool = False,
 ) -> None:
     model_options_dict = json.loads(model_options)
     if isinstance(model_options_dict, dict):
@@ -103,7 +110,7 @@ def runner(
         if os.path.exists(done_embeddings):
             continue
 
-        if os.path.exists(embed_task_dir):
+        if overwrite_incomplete and os.path.exists(embed_task_dir):
             shutil.rmtree(embed_task_dir)
 
         start = time.time()
