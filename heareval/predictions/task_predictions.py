@@ -95,16 +95,16 @@ class GetOutputAtIndex(torch.nn.Module):
 PRED_TYPE_SPECIFIC_PARAM_GRID = {
     "seld": {
         # SELD eval is slow
-        "check_val_every_n_epoch": [40],
+        "check_val_every_n_epoch": [10],
         "process_sequence": [True],
-        "sequence_chunk_length": [100],
+        "sequence_chunk_length": [51],
         "hidden_norm": [BatchNorm1dSeq],
         "hidden_layer_type": ["gru"],
-        "batch_size": [16],
+        "batch_size": [32],
     },
     "avoseld_multiregion": {
         "process_sequence": [True],
-        "sequence_chunk_length": [100],
+        "sequence_chunk_length": [101],
         "hidden_norm": [BatchNorm1dSeq],
         "hidden_layer_type": ["gru"],
         "batch_size": [16],
